@@ -1,0 +1,6 @@
+[project]
+name = "automaton-auditor"
+version = "0.1.0"
+description = "Deep LangGraph Swarms for Autonomous Governance - Week 2 Challenge"
+requires-python = ">=3.10"
+dependencies = []
