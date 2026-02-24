@@ -1,0 +1,29 @@
+﻿# TRP1-Challenge-Week-2 Development Guidelines
+
+Auto-generated from all feature plans. Last updated: 2026-02-24
+
+## Active Technologies
+
+- Python 3.10+ (required by LangGraph and modern type hints) (1-automaton-auditor)
+
+## Project Structure
+
+```text
+src/
+tests/
+```
+
+## Commands
+
+cd src; pytest; ruff check .
+
+## Code Style
+
+Python 3.10+ (required by LangGraph and modern type hints): Follow standard conventions
+
+## Recent Changes
+
+- 1-automaton-auditor: Added Python 3.10+ (required by LangGraph and modern type hints)
+
+<!-- MANUAL ADDITIONS START -->
+<!-- MANUAL ADDITIONS END -->

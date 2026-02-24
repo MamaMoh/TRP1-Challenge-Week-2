@@ -3,4 +3,28 @@ name = "automaton-auditor"
 version = "0.1.0"
 description = "Deep LangGraph Swarms for Autonomous Governance - Week 2 Challenge"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "langgraph>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "pydantic>=2.0.0",
+    "typing-extensions>=4.8.0",
+    "python-dotenv>=1.0.0",
+    "docling>=1.0.0",
+    "langsmith>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
