@@ -4,7 +4,7 @@ import tempfile
 from typing import Dict, Any, List
 
 from src.state import AgentState, Evidence
-from src.tools.git_tools import clone_repo, analyze_git_history
+from src.tools.git_tools import clone_repo, analyze_git_history, get_repo_file_list
 from src.tools.ast_parser import (
     verify_state_models,
     analyze_graph_structure,
@@ -118,10 +118,12 @@ def repo_investigator_node(state: AgentState) -> AgentState:
                             has_defense = "defense" in judges_content.lower() and ("charitable" in judges_content.lower() or "forgiving" in judges_content.lower())
                             has_tech_lead = "tech" in judges_content.lower() and "lead" in judges_content.lower()
                             
+                            # Full file so judges see persona prompts and get_judicial_logic
+                            snippet_len = 3500
                             evidence_list.append(Evidence(
                                 goal="Judicial Nuance and Dialectics",
                                 found=has_prosecutor and has_defense and has_tech_lead,
-                                content=judges_content[:1000] if len(judges_content) > 1000 else judges_content,
+                                content=judges_content[:snippet_len] if len(judges_content) > snippet_len else judges_content,
                                 location="src/nodes/judges.py",
                                 rationale=f"Prosecutor: {has_prosecutor}, Defense: {has_defense}, Tech Lead: {has_tech_lead}",
                                 confidence=0.8 if (has_prosecutor and has_defense and has_tech_lead) else 0.4
@@ -140,10 +142,12 @@ def repo_investigator_node(state: AgentState) -> AgentState:
                                 "deterministic" in justice_content.lower()
                             )
                             
+                            # Full file so judges see synthesis rules, dissent, and report structure
+                            snippet_len = 4000
                             evidence_list.append(Evidence(
                                 goal="Chief Justice Synthesis Engine",
                                 found=has_hardcoded_rules,
-                                content=justice_content[:1000] if len(justice_content) > 1000 else justice_content,
+                                content=justice_content[:snippet_len] if len(justice_content) > snippet_len else justice_content,
                                 location="src/nodes/justice.py",
                                 rationale=f"Hardcoded deterministic rules: {has_hardcoded_rules}",
                                 confidence=0.9 if has_hardcoded_rules else 0.3
@@ -194,8 +198,8 @@ def doc_analyst_node(state: AgentState) -> AgentState:
             keywords = ["Dialectical Synthesis", "Fan-In", "Fan-Out", "Metacognition", "State Synchronization"]
             keyword_results = extract_keywords(pdf_content, keywords)
             
-            # Get repo file list for cross-referencing (if available)
-            repo_files = []  # Would need to be passed from repo_investigator or loaded separately
+            # Get repo file list for cross-referencing (clone so we can verify paths mentioned in PDF)
+            repo_files = get_repo_file_list(state["repo_url"])
             
             # Create evidence for each dimension
             for dimension in pdf_dimensions:
@@ -229,7 +233,7 @@ def doc_analyst_node(state: AgentState) -> AgentState:
                         ))
                 
                 elif criterion_id == "report_accuracy":
-                    # Cross-reference file paths mentioned in PDF (repo_files not available until repo_investigator runs)
+                    # Cross-reference file paths mentioned in PDF against actual repo files
                     mentioned_files = verify_file_claims(pdf_content, repo_files)
                     verified_count = sum(1 for v in mentioned_files.values() if v)
                     hallucinated_count = sum(1 for v in mentioned_files.values() if not v)
@@ -261,33 +265,42 @@ def doc_analyst_node(state: AgentState) -> AgentState:
     return {"evidences": evidences}
 
 
+def _repo_has_architecture_diagram(repo_url: str) -> tuple[bool, str]:
+    """Check if repo contains an architectural diagram (e.g. docs/architecture.md or README with Mermaid)."""
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = clone_repo(repo_url, tmpdir)
+            for rel_path in ("docs/architecture.md", "README.md"):
+                full = os.path.join(repo_path, rel_path)
+                if os.path.exists(full):
+                    with open(full, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    if "flowchart" in content or "graph " in content or "stateDiagram" in content:
+                        snippet = content[:600] if len(content) > 600 else content
+                        return True, f"Diagram in {rel_path}: " + snippet
+    except Exception:
+        pass
+    return False, ""
+
+
 def vision_inspector_node(state: AgentState) -> AgentState:
-    """Multimodal analysis of diagrams in the PDF (optional).
-    
-    This is an optional node for analyzing diagrams.
-    For MVP, returns empty evidence.
-    """
-    # Check for swarm_visual dimension
+    """Check repo for architectural diagram (e.g. Mermaid in docs/architecture.md or README)."""
     visual_dimensions = [
         d for d in state["rubric_dimensions"]
         if d.get("target_artifact") == "pdf_images" or d.get("id") == "swarm_visual"
     ]
-    
     evidences = {}
-    
-    # Optional: Extract images from PDF and analyze
-    # For now, return empty evidence (implementation optional per challenge)
+    found_diagram, diagram_content = _repo_has_architecture_diagram(state["repo_url"])
     for dimension in visual_dimensions:
         criterion_id = dimension["id"]
         evidences[criterion_id] = [Evidence(
             goal="Architectural Diagram Analysis",
-            found=False,
-            content=None,
-            location=state["pdf_path"],
-            rationale="VisionInspector not fully implemented (optional feature)",
-            confidence=0.5
+            found=found_diagram,
+            content=diagram_content or None,
+            location="docs/architecture.md or README.md",
+            rationale="StateGraph diagram (Mermaid flowchart) in repo" if found_diagram else "No diagram found in repo",
+            confidence=0.9 if found_diagram else 0.3
         )]
-    
     return {"evidences": evidences}
 
 

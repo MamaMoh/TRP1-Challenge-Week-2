@@ -92,7 +92,42 @@ The second run re-runs the full audit and then prints a comparison (overall scor
 - **Layer 2 — Judges**: Prosecutor, Defense, Tech Lead. Each scores every rubric dimension from their persona; opinions stored as dicts to avoid serialization issues.
 - **Layer 3 — Chief Justice**: Hardcoded rules (security override, fact supremacy, functionality weight, dissent when variance > 2). Produces `AuditReport` and remediation plan.
 
-Report shows the **original PDF URL** (e.g. Google Drive link), not the temporary download path.
+**StateGraph flow (parallel fan-out / fan-in):**
+
+```mermaid
+flowchart LR
+    subgraph Detectives["Layer 1: Detectives"]
+        START([start])
+        RI[RepoInvestigator]
+        DA[DocAnalyst]
+        VI[VisionInspector]
+        START --> RI
+        START --> DA
+        START --> VI
+    end
+    subgraph Sync["Sync"]
+        EA[Evidence Aggregator]
+    end
+    subgraph Judges["Layer 2: Judges"]
+        P[Prosecutor]
+        D[Defense]
+        TL[Tech Lead]
+    end
+    CJ[Chief Justice]
+    END([END])
+    RI --> EA
+    DA --> EA
+    VI --> EA
+    EA --> P
+    EA --> D
+    EA --> TL
+    P --> CJ
+    D --> CJ
+    TL --> CJ
+    CJ --> END
+```
+
+A detailed diagram is in `docs/architecture.md`. Report shows the **original PDF URL** (e.g. Google Drive link), not the temporary download path.
 
 ## Output
 

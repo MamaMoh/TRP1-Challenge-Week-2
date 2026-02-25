@@ -3,7 +3,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 def clone_repo(repo_url: str, target_dir: str = None) -> str:
@@ -42,6 +42,24 @@ def clone_repo(repo_url: str, target_dir: str = None) -> str:
         raise RuntimeError(error_msg) from e
     except subprocess.TimeoutExpired:
         raise RuntimeError("Git clone timed out after 60 seconds") from None
+
+
+def get_repo_file_list(repo_url: str) -> List[str]:
+    """Clone repo to a temp dir and return relative file paths (normalized with forward slashes).
+    Used for cross-referencing PDF claims. Returns [] on clone failure.
+    """
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_path = clone_repo(repo_url, tmpdir)
+            out: List[str] = []
+            for root, _dirs, files in os.walk(repo_path):
+                for f in files:
+                    abs_path = os.path.join(root, f)
+                    rel = os.path.relpath(abs_path, repo_path)
+                    out.append(rel.replace("\\", "/"))
+            return out
+    except Exception:
+        return []
 
 
 def analyze_git_history(repo_path: str) -> Dict[str, Any]:
