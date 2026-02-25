@@ -40,24 +40,25 @@ def get_forensic_instructions(rubric: Dict[str, Any], criterion_id: str) -> str:
 
 def get_judicial_logic(rubric: Dict[str, Any], criterion_id: str, persona: str) -> str:
     """Get judicial logic for a specific criterion and persona.
-    
+
     Args:
-        rubric: Loaded rubric dictionary
-        criterion_id: Criterion ID
-        persona: One of "prosecutor", "defense", "tech_lead"
-        
+        rubric: Loaded rubric dictionary (must have "dimensions" key).
+        criterion_id: Criterion ID.
+        persona: One of "prosecutor", "defense", "tech_lead".
+
     Returns:
-        Judicial logic string for the persona
-        
-    Raises:
-        ValueError: If criterion_id or persona not found
+        Judicial logic string for the persona. If dimension has no judicial_logic,
+        returns a fallback built from success_pattern and failure_pattern.
     """
-    for dim in rubric["dimensions"]:
-        if dim["id"] == criterion_id:
-            if persona not in dim["judicial_logic"]:
-                raise ValueError(f"Persona '{persona}' not found in judicial_logic for {criterion_id}")
-            return dim["judicial_logic"][persona]
-    
+    for dim in rubric.get("dimensions", []):
+        if dim.get("id") == criterion_id:
+            logic = dim.get("judicial_logic")
+            if logic and isinstance(logic, dict) and persona in logic:
+                return logic[persona]
+            # Fallback when rubric has no judicial_logic (e.g. forensic-only spec)
+            success = dim.get("success_pattern", "Criteria met.")
+            failure = dim.get("failure_pattern", "Criteria not met.")
+            return f"Success: {success}. Failure: {failure}. Evaluate as {persona}."
     raise ValueError(f"Criterion ID not found: {criterion_id}")
 
 

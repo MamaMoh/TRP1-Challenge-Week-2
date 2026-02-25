@@ -229,11 +229,10 @@ def doc_analyst_node(state: AgentState) -> AgentState:
                         ))
                 
                 elif criterion_id == "report_accuracy":
-                    # Cross-reference file paths mentioned in PDF
+                    # Cross-reference file paths mentioned in PDF (repo_files not available until repo_investigator runs)
                     mentioned_files = verify_file_claims(pdf_content, repo_files)
                     verified_count = sum(1 for v in mentioned_files.values() if v)
                     hallucinated_count = sum(1 for v in mentioned_files.values() if not v)
-                    
                     evidence_list.append(Evidence(
                         goal="Report Accuracy (Cross-Reference)",
                         found=hallucinated_count == 0,
@@ -242,12 +241,12 @@ def doc_analyst_node(state: AgentState) -> AgentState:
                         rationale=f"Cross-referenced {len(mentioned_files)} file paths mentioned in PDF",
                         confidence=0.9 if hallucinated_count == 0 else 0.5
                     ))
-                
+
                 if evidence_list:
                     evidences[criterion_id] = evidence_list
-                
-                break  # Success, exit retry loop
-                
+
+            break  # Success, exit retry loop after processing all dimensions
+
         except Exception as e:
             if attempt < max_retries - 1:
                 continue  # Retry

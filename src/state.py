@@ -52,19 +52,17 @@ class AuditReport(BaseModel):
 
 class AgentState(TypedDict):
     """Main state for the Automaton Auditor graph.
-    
+
     Uses reducers (operator.ior, operator.add) to safely handle parallel execution.
-    Without reducers, parallel agents would overwrite each other's data.
     """
     repo_url: str
     pdf_path: str
-    rubric_dimensions: List[Dict]  # Loaded from rubric.json
-    
-    # CRITICAL: Reducers prevent data loss during parallel execution
-    # operator.ior: Dictionary merge (for evidences dict)
-    # operator.add: List append (for opinions and errors lists)
+    rubric_path: Optional[str]  # Path to rubric JSON (for reporting); may be empty
+    rubric_dimensions: List[Dict]
+    synthesis_rules: Dict  # From rubric JSON; Chief Justice uses this
+
     evidences: Annotated[Dict[str, List[Evidence]], operator.ior]
     opinions: Annotated[List[JudicialOpinion], operator.add]
-    errors: Annotated[List[str], operator.add]  # Error tracking
-    
-    final_report: Optional[AuditReport]  # Structured audit report
+    errors: Annotated[List[str], operator.add]
+
+    final_report: Optional[AuditReport]

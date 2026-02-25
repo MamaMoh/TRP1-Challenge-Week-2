@@ -7,25 +7,37 @@ from src.utils.logger import get_logger
 
 logger = get_logger("justice")
 
+# Expected number of judge personas (Prosecutor, Defense, TechLead)
+NUM_JUDGES = 3
+
 
 def chief_justice_node(state: AgentState) -> AgentState:
     """Synthesize dialectical conflict into final verdict using hardcoded deterministic rules.
-    
-    Applies synthesis rules:
-    - Security flaws cap score at 3
-    - Facts override opinions
-    - Tech Lead breaks ties
-    - Documents dissent when scores differ >2 points
-    - Variance re-evaluation when variance > 2
+
+    Runs only when all three judges have submitted opinions (one per dimension each).
+    Otherwise returns no state update so the last invocation (with full state) produces the report.
     """
-    logger.info(f"ChiefJustice: Synthesizing verdict from {len(state['opinions'])} opinions")
-    # Get synthesis rules from rubric
-    # Try to load from config (default path)
-    try:
-        rubric = load_rubric()
-        synthesis_rules = rubric.get("synthesis_rules", {})
-    except Exception:
-        # Fallback to default rules if rubric loading fails
+    opinions = state.get("opinions") or []
+    dimensions = state.get("rubric_dimensions") or []
+    expected_opinions = len(dimensions) * NUM_JUDGES
+
+    if len(opinions) < expected_opinions:
+        logger.info(
+            f"ChiefJustice: Waiting for all judges (have {len(opinions)}/{expected_opinions} opinions), skipping synthesis"
+        )
+        return {}
+
+    logger.info(f"ChiefJustice: Synthesizing verdict from {len(opinions)} opinions")
+
+    synthesis_rules = state.get("synthesis_rules")
+    if not synthesis_rules:
+        try:
+            rubric_path = state.get("rubric_path")
+            rubric = load_rubric(rubric_path) if rubric_path else load_rubric()
+            synthesis_rules = rubric.get("synthesis_rules", {})
+        except Exception:
+            pass
+    if not synthesis_rules:
         synthesis_rules = {
             "security_override": "Confirmed security flaws cap total score at 3.",
             "fact_supremacy": "Forensic evidence (facts) always overrules Judicial opinion (interpretation).",
@@ -113,15 +125,17 @@ def chief_justice_node(state: AgentState) -> AgentState:
             final_score = tech_lead.score if tech_lead else (sum(scores) // len(scores))
             rationale = "Scores are consistent - Tech Lead assessment confirmed."
         
-        # Generate dissent summary if variance > 2
+        # Generate dissent summary if variance > 2 (concatenation avoids brace-format errors)
         dissent_summary: Optional[str] = None
         if prosecutor and defense and abs(prosecutor.score - defense.score) > 2:
+            p_arg = (prosecutor.argument[:150] + "...") if len(prosecutor.argument) > 150 else prosecutor.argument
+            d_arg = (defense.argument[:150] + "...") if len(defense.argument) > 150 else defense.argument
             dissent_summary = (
-                f"Prosecutor ({prosecutor.score}/5) vs Defense ({defense.score}/5) - "
-                f"{score_variance} point variance. "
-                f"Prosecutor: {prosecutor.argument[:150]}... "
-                f"Defense: {defense.argument[:150]}... "
-                f"Resolution: {rationale}"
+                "Prosecutor (" + str(prosecutor.score) + "/5) vs Defense (" + str(defense.score) + "/5) - "
+                + str(score_variance) + " point variance. "
+                "Prosecutor: " + str(p_arg) + " "
+                "Defense: " + str(d_arg) + " "
+                "Resolution: " + str(rationale)
             )
         
         # Generate remediation from Tech Lead opinion
@@ -144,35 +158,30 @@ def chief_justice_node(state: AgentState) -> AgentState:
     # Calculate overall score
     overall_score = total_score / criterion_count if criterion_count > 0 else 0.0
     
-    # Generate executive summary
+    # Generate executive summary (concatenation to avoid brace-format errors in URLs/paths)
     executive_summary = (
-        f"**Automaton Auditor Report**\n\n"
-        f"**Target Repository:** {state['repo_url']}\n"
-        f"**PDF Report:** {state['pdf_path']}\n\n"
-        f"**Overall Score:** {overall_score:.2f}/5.0\n\n"
-        f"**Summary:** Evaluated {criterion_count} criteria across forensic accuracy, judicial nuance, "
-        f"graph orchestration, and documentation quality. "
+        "**Automaton Auditor Report**\n\n"
+        "**Target Repository:** " + str(state.get("repo_url", "")) + "\n"
+        "**PDF Report:** " + str(state.get("pdf_path", "")) + "\n\n"
+        "**Overall Score:** " + f"{overall_score:.2f}" + "/5.0\n\n"
+        "**Summary:** Evaluated " + str(criterion_count) + " criteria across forensic accuracy, judicial nuance, "
+        "graph orchestration, and documentation quality. "
     )
-    
-    # Add summary of key findings
+
     low_scores = [cr for cr in criteria_results if cr.final_score < 3]
     if low_scores:
-        executive_summary += (
-            f"{len(low_scores)} criteria scored below 3/5, indicating areas requiring remediation. "
-        )
-    
+        executive_summary += str(len(low_scores)) + " criteria scored below 3/5, indicating areas requiring remediation. "
+
     high_scores = [cr for cr in criteria_results if cr.final_score >= 4]
     if high_scores:
-        executive_summary += (
-            f"{len(high_scores)} criteria scored 4/5 or higher, indicating strong implementation. "
-        )
-    
+        executive_summary += str(len(high_scores)) + " criteria scored 4/5 or higher, indicating strong implementation. "
+
     # Generate consolidated remediation plan
     remediation_plan = "## Remediation Plan\n\n"
     for cr in criteria_results:
         if cr.final_score < 3:
-            remediation_plan += f"### {cr.dimension_name} (Score: {cr.final_score}/5)\n\n"
-            remediation_plan += f"{cr.remediation}\n\n"
+            remediation_plan += "### " + str(cr.dimension_name) + " (Score: " + str(cr.final_score) + "/5)\n\n"
+            remediation_plan += str(cr.remediation) + "\n\n"
     
     if not any(cr.final_score < 3 for cr in criteria_results):
         remediation_plan += "No critical remediation required. All criteria scored 3/5 or higher.\n"

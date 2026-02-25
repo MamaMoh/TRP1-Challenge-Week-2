@@ -22,23 +22,23 @@ def serialize_report_to_markdown(report: AuditReport) -> str:
     sections.append("## Criterion Breakdown\n\n")
     
     for criterion in report.criteria:
-        sections.append(f"### {criterion.dimension_name} ({criterion.dimension_id})\n\n")
-        sections.append(f"**Final Score:** {criterion.final_score}/5\n\n")
-        
-        # Judge Opinions
+        sections.append("### " + str(criterion.dimension_name) + " (" + str(criterion.dimension_id) + ")\n\n")
+        sections.append("**Final Score:** " + str(criterion.final_score) + "/5\n\n")
+
+        # Judge Opinions (use concatenation so LLM output with { } doesn't break format)
         sections.append("**Judge Opinions:**\n\n")
         for opinion in criterion.judge_opinions:
-            sections.append(f"- **{opinion.judge}** (Score: {opinion.score}/5): {opinion.argument}\n")
+            sections.append("- **" + str(opinion.judge) + "** (Score: " + str(opinion.score) + "/5): " + str(opinion.argument) + "\n")
             if opinion.cited_evidence:
-                sections.append(f"  - Cited Evidence: {', '.join(opinion.cited_evidence[:5])}\n")
+                sections.append("  - Cited Evidence: " + ", ".join(str(x) for x in opinion.cited_evidence[:5]) + "\n")
         sections.append("\n")
-        
+
         # Dissent Summary
         if criterion.dissent_summary:
-            sections.append(f"**Dissent Summary:** {criterion.dissent_summary}\n\n")
-        
+            sections.append("**Dissent Summary:** " + str(criterion.dissent_summary) + "\n\n")
+
         # Remediation for this criterion
-        sections.append(f"**Remediation:** {criterion.remediation}\n\n")
+        sections.append("**Remediation:** " + str(criterion.remediation) + "\n\n")
         sections.append("---\n\n")
     
     # Consolidated Remediation Plan
