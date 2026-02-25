@@ -9,25 +9,40 @@ The Automaton Auditor is a production-grade, hierarchical multi-agent system tha
 ## Project structure
 
 ```
+├── pyproject.toml        # Core deps; use uv sync (uv.lock for exact versions)
+├── uv.lock               # Lock file for reproducible installs
+├── .env.example          # Env template (no secrets); copy to .env
 ├── src/
 │   ├── state.py          # Pydantic models & AgentState (reducers)
 │   ├── graph.py          # LangGraph StateGraph (detectives → judges → chief justice)
 │   ├── config.py         # Rubric loading, env config, list rubrics
 │   ├── paths.py          # Central paths (rubric, audit dirs, reports)
 │   ├── nodes/            # detectives, judges, justice
-│   ├── tools/            # git, AST, PDF (incl. URL download)
+│   ├── tools/            # git, AST, PDF (chunking, query, URL download)
 │   └── utils/            # report serialization, context builder, logger
 ├── rubric/               # Machine-readable rubric JSON (e.g. week2_rubric.json)
+├── docs/                 # Architecture and design (e.g. architecture.md)
 ├── audit/                # Generated reports (report_onself_generated/, etc.)
-├── tests/
+├── tests/                # Unit and integration tests
 └── main.py               # CLI entry point
 ```
 
 ## Setup
 
-1. **Install dependencies**
+**Prerequisites:** Python 3.10+ and [uv](https://docs.astral.sh/uv/) (`pip install uv` or see [install](https://docs.astral.sh/uv/getting-started/installation/)).
+
+1. **Clone and install (reproducible)**
 
    ```bash
+   git clone <this-repo-url>
+   cd TRP1-Challenge-Week-2
+   uv sync
+   ```
+
+   The project uses `uv.lock` (committed) so `uv sync` installs exact dependency versions. To refresh the lock after changing `pyproject.toml`:
+
+   ```bash
+   uv lock
    uv sync
    ```
 
@@ -38,13 +53,27 @@ The Automaton Auditor is a production-grade, hierarchical multi-agent system tha
    - `OPENAI_API_KEY` — OpenAI (default)
    - `OPENROUTER_API_KEY` — OpenRouter (optional; set `LLM_MODEL` for Claude/Gemini etc.)
 
-   The app loads `.env` first; if no API key is found, it falls back to `.env.example`.
+   `.env.example` contains only placeholder variable names and no secrets; keep real keys in `.env` (gitignored). The app loads `.env` first; if no API key is found, it falls back to `.env.example`.
 
 3. **Run an audit**
 
    ```bash
    uv run python main.py --repo <repo_url> --pdf <path_or_url>
    ```
+
+## Reproducible workflow (exact steps)
+
+To get identical dependency versions and run the auditor from a clean state:
+
+| Step | Command | Purpose |
+|------|---------|--------|
+| 1 | `uv sync` | Install deps from `uv.lock` (no lock: run `uv lock` first) |
+| 2 | `cp .env.example .env` (or copy manually) | Create env file from template |
+| 3 | Edit `.env` and set `OPENAI_API_KEY` (or OpenRouter) | Provide LLM API key |
+| 4 | `uv run python main.py -r <repo_url> -p <pdf_path_or_url>` | Run audit |
+| 5 | `uv run pytest` | Run tests (optional: `uv sync --dev` for dev deps) |
+
+For CI or a fresh machine: clone → `uv sync` → set env → `uv run python main.py ...`. No `pip install -r requirements.txt`; all dependencies are declared in `pyproject.toml` and pinned in `uv.lock`.
 
 ## Usage
 
@@ -60,6 +89,7 @@ The Automaton Auditor is a production-grade, hierarchical multi-agent system tha
 
 - **PDF**: Accepts a local path or an HTTP(S) URL. Google Drive share links are converted to direct-download URLs automatically.
 - **Rubric**: Default is `rubric/week2_rubric.json`. Use `--list-rubrics` to see available files.
+- **Repository**: The auditor clones the repo and analyzes the **default branch** only (remote HEAD, typically `main` or `master`). No branch option is supported; ensure the branch you want audited is the default on the remote.
 
 ## Testing on peer vs by peer
 
@@ -150,7 +180,7 @@ pytest tests/integration/
 |-------|------------|
 | Rubric not found | Ensure `rubric/week2_rubric.json` exists; use `--rubric` or `--list-rubrics`. |
 | No API key | Set `OPENAI_API_KEY` or `OPENROUTER_API_KEY` in `.env` (or `.env.example`). |
-| Git clone failed | Check repo URL, network, and that the repo is public or credentials are set. |
+| Git clone failed | Check repo URL, network, and that the repo is public or credentials are set. The auditor clones the default branch only. |
 | PDF download failed | For Google Drive, use a link shared with “Anyone with the link”. |
 | Synthesis failed | Inspect `debug_state.json` in the output dir; use `--trace` and LangSmith. |
 | Rate limits | Rate limiter is enabled; wait and retry or adjust `src/utils/rate_limiter.py`. |

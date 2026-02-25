@@ -1,5 +1,5 @@
 """Judicial layer nodes for dialectical evaluation."""
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -12,12 +12,32 @@ from src.utils.logger import get_logger
 
 logger = get_logger("judges")
 
+# Retries for structured output parse/validation failures (e.g. invalid JSON from LLM)
+JUDICIAL_OPINION_RETRIES = 3
+
 
 def _escape_braces_for_prompt(text: str) -> str:
     """Escape { and } so LangChain prompt template doesn't treat them as placeholders."""
     if not text:
         return text
     return str(text).replace("{", "{{").replace("}", "}}")
+
+
+def _invoke_judicial_chain(chain, judge_name: str, criterion_id: str) -> Optional[JudicialOpinion]:
+    """Invoke chain with retries on validation/parse errors. Returns None if all retries fail."""
+    last_error = None
+    for attempt in range(JUDICIAL_OPINION_RETRIES):
+        try:
+            opinion = chain.invoke({})
+            if opinion and isinstance(opinion, JudicialOpinion):
+                return opinion
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                f"{judge_name}: Attempt {attempt + 1}/{JUDICIAL_OPINION_RETRIES} for {criterion_id} failed: {e}"
+            )
+    logger.error(f"{judge_name}: All {JUDICIAL_OPINION_RETRIES} attempts failed for {criterion_id}: {last_error}")
+    return None
 
 
 def _create_llm(temperature: float, model: str = None) -> ChatOpenAI:
@@ -118,22 +138,21 @@ Render your verdict. Be critical. Hunt for flaws."""
             ("user", user_prompt)
         ])
         
-        try:
-            chain = prompt | llm.with_structured_output(JudicialOpinion)
-            opinion = chain.invoke({})
+        chain = prompt | llm.with_structured_output(JudicialOpinion)
+        opinion = _invoke_judicial_chain(chain, "Prosecutor", criterion_id)
+        if opinion:
             opinion.judge = "Prosecutor"
             opinion.criterion_id = criterion_id
             if len(opinion.argument) < 50:
                 opinion.argument += " (Insufficient evidence or implementation flaws detected.)"
             opinions.append(opinion.model_dump())
             logger.debug(f"Prosecutor: Opinion for {criterion_id} - Score: {opinion.score}")
-        except Exception as e:
-            logger.error(f"Prosecutor: Error evaluating {criterion_id}: {str(e)}")
+        else:
             opinions.append(JudicialOpinion(
                 judge="Prosecutor",
                 criterion_id=criterion_id,
                 score=1,
-                argument=f"Error evaluating evidence: {str(e)}. Insufficient evidence to form confident opinion.",
+                argument="Structured output parse failed after retries. Insufficient evidence to form confident opinion.",
                 cited_evidence=[]
             ).model_dump())
     logger.info(f"Prosecutor: Generated {len(opinions)} opinions")
@@ -197,20 +216,20 @@ Render your verdict. Be charitable. Look for effort and intent."""
             ("user", user_prompt)
         ])
         
-        try:
-            chain = prompt | llm.with_structured_output(JudicialOpinion)
-            opinion = chain.invoke({})
+        chain = prompt | llm.with_structured_output(JudicialOpinion)
+        opinion = _invoke_judicial_chain(chain, "Defense", criterion_id)
+        if opinion:
             opinion.judge = "Defense"
             opinion.criterion_id = criterion_id
             if len(opinion.argument) < 50:
                 opinion.argument += " (Evidence suggests effort and intent, though implementation may be incomplete.)"
             opinions.append(opinion.model_dump())
-        except Exception as e:
+        else:
             opinions.append(JudicialOpinion(
                 judge="Defense",
                 criterion_id=criterion_id,
                 score=1,
-                argument=f"Error evaluating evidence: {str(e)}. Insufficient evidence to form confident opinion.",
+                argument="Structured output parse failed after retries. Insufficient evidence to form confident opinion.",
                 cited_evidence=[]
             ).model_dump())
     return {"opinions": opinions}
@@ -273,20 +292,20 @@ Render your verdict. Be pragmatic. Focus on technical merit."""
             ("user", user_prompt)
         ])
         
-        try:
-            chain = prompt | llm.with_structured_output(JudicialOpinion)
-            opinion = chain.invoke({})
+        chain = prompt | llm.with_structured_output(JudicialOpinion)
+        opinion = _invoke_judicial_chain(chain, "TechLead", criterion_id)
+        if opinion:
             opinion.judge = "TechLead"
             opinion.criterion_id = criterion_id
             if len(opinion.argument) < 50:
                 opinion.argument += " (Technical assessment limited by insufficient evidence.)"
             opinions.append(opinion.model_dump())
-        except Exception as e:
+        else:
             opinions.append(JudicialOpinion(
                 judge="TechLead",
                 criterion_id=criterion_id,
                 score=1,
-                argument=f"Error evaluating evidence: {str(e)}. Insufficient evidence to form confident opinion.",
+                argument="Structured output parse failed after retries. Insufficient evidence to form confident opinion.",
                 cited_evidence=[]
             ).model_dump())
     return {"opinions": opinions}

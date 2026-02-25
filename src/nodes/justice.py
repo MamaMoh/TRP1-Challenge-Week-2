@@ -90,13 +90,16 @@ def chief_justice_node(state: AgentState) -> AgentState:
         scores = [prosecutor.score, defense.score, tech_lead.score]
         score_variance = max(scores) - min(scores)
         
-        # Rule 1: Security Override
+        # Rule 1: Security Override — only when Prosecutor explicitly identifies a confirmed flaw
+        arg_lower = (prosecutor.argument or "").lower() if prosecutor else ""
         has_security_issue = (
             prosecutor and (
-                "security" in prosecutor.argument.lower() or
-                "vulnerability" in prosecutor.argument.lower() or
-                "os.system" in prosecutor.argument.lower() or
-                "shell injection" in prosecutor.argument.lower()
+                "shell injection" in arg_lower or
+                "security vulnerability" in arg_lower or
+                "security flaw" in arg_lower or
+                ("os.system" in arg_lower and any(
+                    w in arg_lower for w in ("found", "detected", "used", "present", "violation")
+                ))
             )
         )
         
