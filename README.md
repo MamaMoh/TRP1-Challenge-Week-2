@@ -1,236 +1,125 @@
 # Automaton Auditor
 
-Deep LangGraph Swarms for Autonomous Governance - Week 2 Challenge
+Deep LangGraph Swarms for Autonomous Governance — Week 2 Challenge
 
 ## Overview
 
-The Automaton Auditor is a production-grade, hierarchical multi-agent LangGraph system that autonomously evaluates GitHub repositories and PDF reports through a "Digital Courtroom" architecture. It forensically analyzes code, applies dialectical judgment from three distinct personas (Prosecutor, Defense, Tech Lead), and produces executive-grade audit reports.
+The Automaton Auditor is a production-grade, hierarchical multi-agent system that evaluates GitHub repositories and PDF reports through a **Digital Courtroom** architecture: detectives collect forensic evidence in parallel, three judge personas (Prosecutor, Defense, Tech Lead) render dialectical opinions, and a Chief Justice node synthesizes a final verdict with deterministic conflict resolution. Output is an executive-grade audit report (Markdown + JSON).
 
-## Project Structure
+## Project structure
 
 ```
-TRP1-Challenge-Week-2/
 ├── src/
-│   ├── state.py        # Pydantic models (Evidence, JudicialOpinion, AgentState)
-│   ├── graph.py        # LangGraph StateGraph definition
-│   ├── config.py       # Configuration and rubric loading
-│   ├── nodes/          # Detective, Judge, and Chief Justice nodes
-│   ├── tools/          # Forensic tools (git, AST, PDF parsers)
-│   └── utils/          # Utility functions
-├── rubric/             # Machine-readable rubric JSON
-├── audit/              # Generated audit reports
-├── tests/              # Unit, integration, and fixture tests
-└── main.py             # CLI entry point
+│   ├── state.py          # Pydantic models & AgentState (reducers)
+│   ├── graph.py          # LangGraph StateGraph (detectives → judges → chief justice)
+│   ├── config.py         # Rubric loading, env config, list rubrics
+│   ├── paths.py          # Central paths (rubric, audit dirs, reports)
+│   ├── nodes/            # detectives, judges, justice
+│   ├── tools/            # git, AST, PDF (incl. URL download)
+│   └── utils/            # report serialization, context builder, logger
+├── rubric/               # Machine-readable rubric JSON (e.g. week2_rubric.json)
+├── audit/                # Generated reports (report_onself_generated/, etc.)
+├── tests/
+└── main.py               # CLI entry point
 ```
 
 ## Setup
 
-1. **Install dependencies:**
+1. **Install dependencies**
+
+   ```bash
+   uv sync
+   ```
+
+2. **Environment**
+
+   Copy `.env.example` to `.env` and set at least one of:
+
+   - `OPENAI_API_KEY` — OpenAI (default)
+   - `OPENROUTER_API_KEY` — OpenRouter (optional; set `LLM_MODEL` for Claude/Gemini etc.)
+
+   The app loads `.env` first; if no API key is found, it falls back to `.env.example`.
+
+3. **Run an audit**
+
+   ```bash
+   uv run python main.py --repo <repo_url> --pdf <path_or_url>
+   ```
+
+## Usage
+
+| Action | Command |
+|--------|--------|
+| **Audit (local PDF)** | `python main.py -r https://github.com/user/repo.git -p ./report.pdf` |
+| **Audit (PDF URL)** | `python main.py -r https://github.com/user/repo.git -p "https://drive.google.com/..."` |
+| **List rubrics** | `python main.py --list-rubrics` |
+| **Custom rubric** | `python main.py -r <repo> -p <pdf> --rubric rubric/week2_rubric.json` |
+| **Custom output dir** | `python main.py -r <repo> -p <pdf> --output audit/report_onpeer_generated/` |
+| **Compare with peer report** | `python main.py -r <repo> -p <pdf> --compare path/to/peer_audit_report.md` |
+| **Verbose + tracing** | `python main.py -r <repo> -p <pdf> --verbose --trace` |
+
+- **PDF**: Accepts a local path or an HTTP(S) URL. Google Drive share links are converted to direct-download URLs automatically.
+- **Rubric**: Default is `rubric/week2_rubric.json`. Use `--list-rubrics` to see available files.
+
+## Testing on peer vs by peer
+
+| Scenario | What you do | Where output goes |
+|----------|-------------|-------------------|
+| **On peer** | You audit a peer’s repo and PDF (you run the auditor on their repo + report). | `--output audit/report_onpeer_generated/` so the report is saved there. |
+| **By peer** | A peer has audited your repo and sent you their `audit_report.md`. You want to compare it with your own run. | Put their report in `audit/report_bypeer_received/` (e.g. `peer_audit_report.md`). Run your audit, then pass `--compare audit/report_bypeer_received/peer_audit_report.md` to see score differences and per-criterion diffs. |
+
+**Example — audit a peer’s submission (on peer):**
+
 ```bash
-uv sync
+python main.py -r https://github.com/peer/their-week2-repo.git -p "https://drive.google.com/..." -o audit/report_onpeer_generated/
 ```
 
-2. **Configure environment:**
+**Example — compare with a report you received (by peer):**
+
 ```bash
-cp .env.example .env
-# Edit .env with your API keys
+# 1. Run your own audit (same repo + PDF)
+python main.py -r https://github.com/you/your-repo.git -p ./reports/your_report.pdf -o audit/report_onself_generated/
+
+# 2. Compare with the peer’s report you received
+python main.py -r https://github.com/you/your-repo.git -p ./reports/your_report.pdf --compare audit/report_bypeer_received/peer_audit_report.md
 ```
 
-   **LLM Provider Options:**
-   - **OpenAI** (default): Set `OPENAI_API_KEY=sk-your-key-here`
-   - **OpenRouter** (supports multiple models): Set `OPENROUTER_API_KEY=your-key-here`
-     - OpenRouter allows access to Claude, Gemini, and other models
-     - Set `LLM_MODEL=anthropic/claude-3.5-sonnet` for Claude
-     - Set `LLM_MODEL=google/gemini-pro` for Gemini
-
-3. **Run the auditor:**
-```bash
-uv run python main.py --repo <repo_url> --pdf <pdf_path>
-```
+The second run re-runs the full audit and then prints a comparison (overall score difference, criterion-by-criterion diffs, and issues the peer’s report flagged). To only compare without re-running, use the report parser in code: `from src.utils.report_parser import compare_reports; compare_reports("audit/report_onself_generated/audit_report.md", "audit/report_bypeer_received/peer_audit_report.md")`.
 
 ## Architecture
 
-The system implements a three-layer "Digital Courtroom" architecture:
+- **Layer 1 — Detectives**: RepoInvestigator (git + AST), DocAnalyst (PDF + cross-ref), VisionInspector (diagrams; optional). Run in parallel; evidence merged via state reducer.
+- **Layer 2 — Judges**: Prosecutor, Defense, Tech Lead. Each scores every rubric dimension from their persona; opinions stored as dicts to avoid serialization issues.
+- **Layer 3 — Chief Justice**: Hardcoded rules (security override, fact supremacy, functionality weight, dissent when variance > 2). Produces `AuditReport` and remediation plan.
 
-- **Layer 1: Detective Layer** - Parallel forensic evidence collection (RepoInvestigator, DocAnalyst, VisionInspector)
-- **Layer 2: Judicial Layer** - Dialectical opinion generation (Prosecutor, Defense, Tech Lead personas)
-- **Layer 3: Chief Justice** - Deterministic conflict resolution and report synthesis
+Report shows the **original PDF URL** (e.g. Google Drive link), not the temporary download path.
 
-## Features
+## Output
 
-- **Forensic Accuracy**: AST-based code analysis, git history verification, PDF cross-referencing
-- **Dialectical Evaluation**: Three distinct judge personas with conflicting perspectives
-- **Deterministic Synthesis**: Hardcoded rules for conflict resolution (not LLM averaging)
-- **Production-Grade**: State reducers for parallel safety, structured outputs, full observability
-
-## Usage Examples
-
-### Basic Audit
-```bash
-python main.py --repo https://github.com/user/repo.git --pdf report.pdf
-```
-
-### Self-Audit
-```bash
-python main.py --repo https://github.com/yourusername/your-repo.git \
-               --pdf your_report.pdf \
-               --output audit/report_onself_generated/
-```
-
-### Compare with Peer Report
-```bash
-python main.py --repo https://github.com/user/repo.git \
-               --pdf report.pdf \
-               --compare audit/report_bypeer_received/peer_audit_report.md
-```
-
-### Verbose Mode with Tracing
-```bash
-python main.py --repo https://github.com/user/repo.git \
-               --pdf report.pdf \
-               --verbose --trace
-```
-
-## Workflows
-
-### Self-Audit Workflow
-
-Before submitting your Week 2 repository for peer review, run a self-audit to identify issues proactively:
-
-1. **Generate Self-Audit Report:**
-   ```bash
-   python main.py --repo <your_repo_url> --pdf <your_pdf_report> \
-                  --output audit/report_onself_generated/
-   ```
-
-2. **Review the Report:**
-   - Check the executive summary for overall score
-   - Review criterion-by-criterion breakdown
-   - Focus on criteria scoring below 3/5
-
-3. **Apply Remediation:**
-   - Follow the remediation plan in the report
-   - Fix identified issues in your code
-   - Update your PDF report if claims don't match implementation
-
-4. **Re-run Self-Audit:**
-   - Verify improvements are detected
-   - Iterate until all critical issues are resolved
-
-**Benefits:**
-- Catch issues before peer review
-- Improve your score proactively
-- Ensure your repository meets all rubric requirements
-- Same forensic rigor as peer audits
-
-### Adversarial Improvement Loop (MinMax Optimization)
-
-The adversarial improvement loop is the core meta-game of Week 2: your auditor improves by finding issues in peer code, and peer auditors improve your code by finding issues you missed.
-
-1. **Receive Peer Audit:**
-   - Peer runs their auditor on your repository
-   - You receive report in `audit/report_bypeer_received/`
-   - Review issues identified by peer's auditor
-
-2. **Fix Your Week 2 Code:**
-   - Address issues found by peer auditor
-   - Fix bugs, improve architecture, add missing features
-   - Update your repository
-
-3. **Improve Your Auditor:**
-   - Analyze what peer auditor caught that yours missed
-   - Enhance your detective nodes to catch similar issues
-   - Refine judge prompts for better evaluation
-   - Add new evidence collection protocols
-
-4. **Compare Audits:**
-   ```bash
-   python main.py --repo <repo> --pdf <pdf> \
-                  --compare audit/report_bypeer_received/peer_report.md
-   ```
-   - See score differences
-   - Identify where your auditor is too lenient/strict
-   - Understand peer's evaluation criteria
-
-5. **Iterate:**
-   - Re-run your improved auditor on peers' repos
-   - Receive new feedback
-   - Continue the improvement cycle
-
-**Goal:** Create a co-evolutionary pressure where:
-- Stronger auditors find deeper flaws
-- Better code forces auditors to evolve further
-- Both code quality and auditor capability improve
-
-## Development
-
-See [quickstart.md](specs/1-automaton-auditor/quickstart.md) for detailed development workflow.
+- **Markdown**: `audit_report.md` — metadata table, score overview, criterion breakdown with judge opinions and remediation.
+- **JSON**: `audit_report.json` — same content for tooling.
 
 ## Testing
 
-Run the test suite:
-
 ```bash
-# Install dev dependencies
 uv sync --dev
-
-# Run all tests
 pytest
-
-# Run with coverage
 pytest --cov=src --cov-report=html
-
-# Run specific test file
-pytest tests/unit/test_state.py
-
-# Run integration tests
+pytest tests/unit/
 pytest tests/integration/
 ```
 
 ## Troubleshooting
 
-### Common Issues
-
-**Error: "Rubric file not found"**
-- Ensure `rubric/week2_rubric.json` exists
-- Check file path is correct
-- Verify JSON syntax is valid
-
-**Error: "Required environment variable not set: OPENAI_API_KEY"**
-- Copy `.env.example` to `.env`
-- Add your OpenAI API key to `.env`
-- Restart your terminal/IDE after setting environment variables
-
-**Error: "Git clone failed"**
-- Verify repository URL is accessible
-- Check network connection
-- Ensure repository is public or credentials are configured
-- Try cloning manually: `git clone <repo_url>`
-
-**Error: "PDF parsing failed"**
-- Verify PDF file exists and is readable
-- Ensure PDF is not corrupted
-- Check if PDF requires OCR (not supported - use standard PDFs)
-- Try opening the PDF in a PDF viewer to verify it's valid
-
-**Warning: "Synthesis failed - no report generated"**
-- Check LangSmith traces for detailed error information
-- Review partial state saved in `debug_state.json`
-- Verify all judge nodes completed successfully
-- Check for rate limiting issues (see rate limiter logs)
-
-**Error: "Rate limit exceeded"**
-- The system includes rate limiting (60 calls/minute default)
-- Wait a few minutes and retry
-- Check LangSmith dashboard for API usage
-- Consider adjusting rate limits in `src/utils/rate_limiter.py`
-
-**Performance Issues**
-- AST parsing is cached for performance
-- Large repositories may take longer to analyze
-- Use `--verbose` flag to see progress
-- Check system resources (memory, CPU)
+| Issue | What to do |
+|-------|------------|
+| Rubric not found | Ensure `rubric/week2_rubric.json` exists; use `--rubric` or `--list-rubrics`. |
+| No API key | Set `OPENAI_API_KEY` or `OPENROUTER_API_KEY` in `.env` (or `.env.example`). |
+| Git clone failed | Check repo URL, network, and that the repo is public or credentials are set. |
+| PDF download failed | For Google Drive, use a link shared with “Anyone with the link”. |
+| Synthesis failed | Inspect `debug_state.json` in the output dir; use `--trace` and LangSmith. |
+| Rate limits | Rate limiter is enabled; wait and retry or adjust `src/utils/rate_limiter.py`. |
 
 ## License
 
-Week 2 Challenge - TRP1 Intensive Training
+Week 2 Challenge — TRP1 Intensive Training

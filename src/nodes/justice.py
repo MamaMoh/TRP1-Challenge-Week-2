@@ -182,8 +182,8 @@ def chief_justice_node(state: AgentState) -> AgentState:
     if high_scores:
         executive_summary += str(len(high_scores)) + " criteria scored 4/5 or higher, indicating strong implementation. "
 
-    # Generate consolidated remediation plan
-    remediation_plan = "## Remediation Plan\n\n"
+    # Generate consolidated remediation plan (serializer adds the section heading)
+    remediation_plan = ""
     for cr in criteria_results:
         if cr.final_score < 3:
             remediation_plan += "### " + str(cr.dimension_name) + " (Score: " + str(cr.final_score) + "/5)\n\n"
