@@ -4,6 +4,15 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 
+def _extract_remediation_after(content: str, start: int, max_chars: int = 2000) -> str:
+    """Extract remediation text from #### Remediation block after start."""
+    section = content[start : start + max_chars]
+    rem_match = re.search(r"#### Remediation\n\n(.*?)(?=\n---|\n### |\n#### |\Z)", section, re.DOTALL | re.IGNORECASE)
+    if not rem_match:
+        return ""
+    return rem_match.group(1).strip()
+
+
 def parse_markdown_report(report_path: str) -> Dict[str, Any]:
     """Parse a Markdown audit report and extract structured information.
     
@@ -15,34 +24,61 @@ def parse_markdown_report(report_path: str) -> Dict[str, Any]:
     """
     with open(report_path, "r", encoding="utf-8") as f:
         content = f.read()
-    
-    # Extract overall score
-    overall_score_match = re.search(r"\*\*Overall Score:\*\* ([\d.]+)/5", content)
-    overall_score = float(overall_score_match.group(1)) if overall_score_match else None
-    
-    # Extract criterion breakdowns
+
+    # Overall score: support both metadata table (current) and legacy "**Overall Score:** X/5"
+    overall_score = None
+    table_score = re.search(r"\*\*Overall score\*\* \| \*\*([\d.]+)\s*/\s*5", content, re.IGNORECASE)
+    if table_score:
+        overall_score = float(table_score.group(1))
+    if overall_score is None:
+        legacy = re.search(r"\*\*Overall Score:\*\* ([\d.]+)/5", content)
+        if legacy:
+            overall_score = float(legacy.group(1))
+
+    # Criterion breakdowns: support "### N. Name" + "**Final score:** ... X/5" (current) and legacy "### Name (id)" + "**Final Score:** X/5"
     criteria = []
-    criterion_pattern = r"### (.+?) \(([^)]+)\)\n\n\*\*Final Score:\*\* (\d)/5"
-    for match in re.finditer(criterion_pattern, content):
-        criterion_name = match.group(1)
-        criterion_id = match.group(2)
-        score = int(match.group(3))
-        
-        # Extract remediation for this criterion
-        remediation_start = content.find(f"### {criterion_name}", match.end())
-        remediation_section = content[remediation_start:remediation_start + 1000]
-        remediation_match = re.search(r"\*\*Remediation:\*\* (.+?)(?=\n\n|$)", remediation_section, re.DOTALL)
-        remediation = remediation_match.group(1).strip() if remediation_match else ""
-        
+    # Current format: ### 1. Git Forensic Analysis\n\n**Final score:** ■■■□□ 3/5
+    current_pattern = re.compile(
+        r"### \d+\. ([^\n]+)\n\n\*\*Final score:\*\* .*? (\d)/5",
+        re.IGNORECASE,
+    )
+    for match in current_pattern.finditer(content):
+        criterion_name = match.group(1).strip()
+        score = int(match.group(2))
+        criterion_id = criterion_name  # use name as id for comparison
+        remediation = _extract_remediation_after(content, match.end(), 2000)
         criteria.append({
             "criterion_id": criterion_id,
             "criterion_name": criterion_name,
             "score": score,
-            "remediation": remediation
+            "remediation": remediation,
         })
+    # Legacy format if no criteria found
+    if not criteria:
+        criterion_pattern = re.compile(r"### (.+?) \(([^)]+)\)\n\n\*\*Final Score:\*\* (\d)/5")
+        for match in criterion_pattern.finditer(content):
+            criterion_name = match.group(1)
+            criterion_id = match.group(2)
+            score = int(match.group(3))
+            remediation_start = content.find(f"### {criterion_name}", match.end())
+            remediation_section = content[remediation_start : remediation_start + 1000]
+            remediation_match = re.search(r"\*\*Remediation:\*\* (.+?)(?=\n\n|$)", remediation_section, re.DOTALL)
+            remediation = remediation_match.group(1).strip() if remediation_match else ""
+            criteria.append({
+                "criterion_id": criterion_id,
+                "criterion_name": criterion_name,
+                "score": score,
+                "remediation": remediation,
+            })
     
-    # Extract remediation plan section
-    remediation_plan_match = re.search(r"## Remediation Plan\n\n(.+?)(?=\n## |$)", content, re.DOTALL)
+    # Extract remediation plan section (serializer uses "Remediation plan (consolidated)")
+    remediation_plan_match = re.search(
+        r"## Remediation plan \(consolidated\)\n\n(.+?)(?=\n\n---|$)",
+        content,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if not remediation_plan_match:
+        remediation_plan_match = re.search(r"## Remediation Plan\n\n(.+?)(?=\n## |$)", content, re.DOTALL)
     remediation_plan = remediation_plan_match.group(1).strip() if remediation_plan_match else ""
     
     return {

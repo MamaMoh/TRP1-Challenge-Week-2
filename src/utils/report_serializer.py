@@ -99,7 +99,12 @@ def serialize_report_to_markdown(report: AuditReport) -> str:
     # ---- Remediation plan ----
     lines.append("## Remediation plan (consolidated)")
     lines.append("")
-    lines.append(report.remediation_plan.strip())
+    plan = report.remediation_plan.strip()
+    # Avoid duplicate H2 if content starts with "## Remediation Plan"
+    if plan.lower().startswith("## remediation plan"):
+        first_newline = plan.find("\n")
+        plan = plan[first_newline + 1:].strip() if first_newline != -1 else ""
+    lines.append(plan)
     lines.append("")
     lines.append("---")
     lines.append("")
