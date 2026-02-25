@@ -11,7 +11,14 @@ from src.tools.ast_parser import (
     verify_safe_tool_engineering,
     verify_structured_output
 )
-from src.tools.pdf_parser import parse_pdf, extract_keywords, verify_file_claims
+from src.tools.pdf_parser import (
+    parse_pdf,
+    extract_keywords,
+    verify_file_claims,
+    chunk_pdf_semantic,
+    query_pdf_chunks,
+    get_pdf_chunks_for_keywords,
+)
 from src.utils.context_builder import build_detective_context
 from src.utils.logger import get_logger
 
@@ -85,12 +92,21 @@ def repo_investigator_node(state: AgentState) -> AgentState:
                         ))
                     
                     elif criterion_id == "safe_tool_engineering":
+                        # Unambiguous wording so judges do not misread: "os.system: False" as "found"
+                        os_system_status = (
+                            "NONE DETECTED (no raw os.system calls; subprocess used instead)"
+                            if not safety_evidence_data.get("has_os_system", True)
+                            else "DETECTED (security violation)"
+                        )
                         evidence_list.append(Evidence(
                             goal="Safe Tool Engineering",
                             found=safety_evidence_data["is_safe"],
-                            content=f"Sandboxing: {safety_evidence_data['uses_sandboxing']}, "
-                                   f"Subprocess: {safety_evidence_data['uses_subprocess']}, "
-                                   f"os.system: {safety_evidence_data['has_os_system']}",
+                            content=(
+                                f"Sandboxing: {'Yes' if safety_evidence_data.get('uses_sandboxing') else 'No'}. "
+                                f"Subprocess: {'Yes' if safety_evidence_data.get('uses_subprocess') else 'No'}. "
+                                f"os.system calls: {os_system_status}. "
+                                f"Error handling: {'Yes' if safety_evidence_data.get('has_error_handling') else 'No'}."
+                            ),
                             location=safety_evidence_data["file_path"],
                             rationale=safety_evidence_data["rationale"],
                             confidence=safety_evidence_data["confidence"]
@@ -141,15 +157,20 @@ def repo_investigator_node(state: AgentState) -> AgentState:
                                 "fact" in justice_content.lower() and
                                 "deterministic" in justice_content.lower()
                             )
-                            
-                            # Full file so judges see synthesis rules, dissent, and report structure
-                            snippet_len = 4000
+                            # Prefer conflict-resolution block so judges see Rule 1/2/3/4 explicitly
+                            conflict_marker = "# Conflict resolution logic"
+                            if conflict_marker in justice_content:
+                                start = justice_content.index(conflict_marker)
+                                block = justice_content[start : start + 3200]
+                                content = "[[Conflict resolution section]]\n" + block + "\n\n[[Rest of file]]\n" + justice_content[:800]
+                            else:
+                                content = justice_content
                             evidence_list.append(Evidence(
                                 goal="Chief Justice Synthesis Engine",
                                 found=has_hardcoded_rules,
-                                content=justice_content[:snippet_len] if len(justice_content) > snippet_len else justice_content,
+                                content=content,
                                 location="src/nodes/justice.py",
-                                rationale=f"Hardcoded deterministic rules: {has_hardcoded_rules}",
+                                rationale=f"Hardcoded deterministic rules (security_override, variance_re_evaluation, functionality_weight): {has_hardcoded_rules}",
                                 confidence=0.9 if has_hardcoded_rules else 0.3
                             ))
                     
@@ -207,20 +228,34 @@ def doc_analyst_node(state: AgentState) -> AgentState:
                 evidence_list = []
                 
                 if criterion_id == "theoretical_depth":
-                    # Keyword search evidence
+                    # Keyword search + semantic chunking/query for context
                     found_keywords = []
                     for keyword in keywords:
                         if keyword_results[keyword]:
                             found_keywords.extend(keyword_results[keyword])
-                    
-                    if found_keywords:
+
+                    # Semantic chunks and query: get relevant chunks per keyword
+                    chunks_by_keyword = get_pdf_chunks_for_keywords(
+                        pdf_content, keywords, max_chunk_chars=1200, top_k_per_keyword=2
+                    )
+                    chunk_context = []
+                    for kw, chunk_list in chunks_by_keyword.items():
+                        for c in chunk_list[:2]:
+                            if c.get("score", 0) > 0 and c.get("text"):
+                                chunk_context.append(f"[{kw}]: {c['text'][:500]}...")
+                    content_parts = list(found_keywords[:5])
+                    if chunk_context:
+                        content_parts.append("--- Chunk context ---")
+                        content_parts.extend(chunk_context[:3])
+
+                    if found_keywords or chunk_context:
                         evidence_list.append(Evidence(
                             goal="Theoretical Depth Analysis",
                             found=True,
-                            content="\n".join(found_keywords[:5]),  # First 5 matches
+                            content="\n".join(content_parts),
                             location=state["pdf_path"],
-                            rationale=f"Found {len(found_keywords)} keyword matches in PDF with context",
-                            confidence=0.8 if len(found_keywords) >= 2 else 0.5
+                            rationale=f"Found {len(found_keywords)} keyword matches; chunk query returned {len(chunk_context)} relevant sections",
+                            confidence=0.85 if len(found_keywords) >= 2 or chunk_context else 0.5
                         ))
                     else:
                         evidence_list.append(Evidence(
@@ -235,14 +270,24 @@ def doc_analyst_node(state: AgentState) -> AgentState:
                 elif criterion_id == "report_accuracy":
                     # Cross-reference file paths mentioned in PDF against actual repo files
                     mentioned_files = verify_file_claims(pdf_content, repo_files)
-                    verified_count = sum(1 for v in mentioned_files.values() if v)
-                    hallucinated_count = sum(1 for v in mentioned_files.values() if not v)
+                    verified = [p for p, exists in mentioned_files.items() if exists]
+                    hallucinated = [p for p, exists in mentioned_files.items() if not exists]
+                    verified_count = len(verified)
+                    hallucinated_count = len(hallucinated)
+                    content_parts = [
+                        f"Verified paths: {verified_count}. Hallucinated paths: {hallucinated_count}.",
+                        f"Verified: {', '.join(verified[:15]) if verified else '(none)'}{' ...' if len(verified) > 15 else ''}.",
+                    ]
+                    if hallucinated_count <= 10 and hallucinated:
+                        content_parts.append(f"Hallucinated: {', '.join(hallucinated)}.")
+                    elif hallucinated:
+                        content_parts.append(f"Hallucinated (first 10): {', '.join(hallucinated[:10])} ...")
                     evidence_list.append(Evidence(
                         goal="Report Accuracy (Cross-Reference)",
                         found=hallucinated_count == 0,
-                        content=f"Verified paths: {verified_count}, Hallucinated paths: {hallucinated_count}",
+                        content=" ".join(content_parts),
                         location=state["pdf_path"],
-                        rationale=f"Cross-referenced {len(mentioned_files)} file paths mentioned in PDF",
+                        rationale=f"Cross-referenced {len(mentioned_files)} file paths (project paths only, case-insensitive).",
                         confidence=0.9 if hallucinated_count == 0 else 0.5
                     ))
 

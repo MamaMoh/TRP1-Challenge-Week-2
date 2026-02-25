@@ -171,8 +171,10 @@ class TestJudgeNodes:
         mock_llm_class.return_value = mock_llm
         
         with patch('src.nodes.judges.ChatPromptTemplate') as mock_prompt:
-            mock_prompt.from_messages.return_value = Mock() | mock_chain
-            
+            mock_pipe_left = Mock()
+            mock_pipe_left.__or__ = lambda self, other: other
+            mock_prompt.from_messages.return_value = mock_pipe_left
+
             result = prosecutor_node(sample_state_with_evidence)
             assert "opinions" in result
             assert len(result["opinions"]) > 0

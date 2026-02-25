@@ -1,10 +1,14 @@
-"""PDF parsing tools for document analysis."""
+"""PDF parsing tools for document analysis.
+
+Includes semantic chunking (by section/paragraph), query APIs to find relevant
+chunks by keywords or overlap scoring, and cross-reference verification.
+"""
 import re
 import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 
 # Try to import DocumentConverter with fallback
 try:
@@ -183,32 +187,203 @@ def extract_keywords(pdf_content: str, keywords: List[str]) -> Dict[str, List[st
     return results
 
 
+def _normalize_path_for_match(p: str) -> str:
+    """Normalize path for case-insensitive and slash-agnostic comparison."""
+    return p.strip().replace("\\", "/").lstrip("./").lower()
+
+
 def verify_file_claims(pdf_content: str, repo_files: List[str]) -> Dict[str, bool]:
     """Cross-reference file paths mentioned in PDF with actual repository files.
-    
-    Args:
-        pdf_content: Extracted PDF text content
-        repo_files: List of actual file paths in repository
-        
-    Returns:
-        Dictionary mapping mentioned file paths to whether they exist
+
+    Uses case-insensitive and slash-normalized matching so e.g. src/State.py
+    matches repo file src/state.py. Only counts paths that look like project paths
+    (src/, rubric/, docs/, tests/, main.py) to reduce false positives from generic .py mentions.
     """
-    mentioned_files = {}
-    repo_file_set = set(repo_files)
-    
-    # Simple heuristic: look for patterns like "src/", "file.py", etc.
-    import re
+    mentioned_files: Dict[str, bool] = {}
+    repo_normalized = {_normalize_path_for_match(f): f for f in repo_files}
+
+    # Prefer project-relevant path patterns to avoid matching random "foo.py" in text
     file_patterns = [
-        r'src/[^\s\)]+\.py',
-        r'[a-zA-Z_][a-zA-Z0-9_]*\.py',
-        r'[a-zA-Z_][a-zA-Z0-9_]*/[^\s\)]+\.py',
+        r"src/[^\s\)\]\"]+\.py",
+        r"rubric/[^\s\)\]\"]+\.json",
+        r"docs/[^\s\)\]\"]+",
+        r"tests/[^\s\)\]\"]+\.py",
+        r"main\.py",
     ]
-    
+
     for pattern in file_patterns:
-        matches = re.findall(pattern, pdf_content)
-        for match in matches:
+        for match in re.findall(pattern, pdf_content):
             key = match.strip().replace("\\", "/").lstrip("./")
-            if key and key not in mentioned_files:
-                mentioned_files[key] = key in repo_file_set
-    
+            if not key or key in mentioned_files:
+                continue
+            key_norm = _normalize_path_for_match(key)
+            mentioned_files[key] = key_norm in repo_normalized
+
     return mentioned_files
+
+
+# --- Semantic chunking and query APIs ---
+
+# Section headers: markdown-style ## or lines that look like titles (short, no trailing period)
+_SECTION_HEADER_RE = re.compile(r"^(#{1,6}\s+.+)$|^([A-Z][^\n.]{2,60})$", re.MULTILINE)
+
+
+def chunk_pdf_semantic(
+    pdf_content: str,
+    max_chunk_chars: int = 1200,
+    overlap_chars: int = 100,
+) -> List[Dict[str, Any]]:
+    """Split PDF text into semantic chunks (by section/paragraph) for retrieval.
+
+    Chunks respect section boundaries when possible (headers, double newlines).
+    Each chunk has 'text', 'start', 'end' (byte offsets), and optional 'section' title.
+
+    Args:
+        pdf_content: Full extracted PDF text.
+        max_chunk_chars: Soft max length per chunk.
+        overlap_chars: Overlap between consecutive chunks to avoid breaking phrases.
+
+    Returns:
+        List of dicts: {"text": str, "start": int, "end": int, "section": str or None}.
+    """
+    if not pdf_content or not pdf_content.strip():
+        return []
+
+    chunks: List[Dict[str, Any]] = []
+    # Split into paragraphs (double newline or section header)
+    parts: List[Tuple[int, str, Optional[str]]] = []  # (start, text, section_header)
+    current_start = 0
+    section_header: Optional[str] = None
+    pos = 0
+    normalized = pdf_content.replace("\r\n", "\n").replace("\r", "\n")
+
+    for m in _SECTION_HEADER_RE.finditer(normalized):
+        if m.start() > pos:
+            paragraph = normalized[pos : m.start()].strip()
+            if paragraph:
+                parts.append((pos, paragraph, section_header))
+        section_header = (m.group(1) or m.group(2) or "").strip() or None
+        pos = m.start()
+
+    if pos < len(normalized):
+        paragraph = normalized[pos:].strip()
+        if paragraph:
+            parts.append((pos, paragraph, section_header))
+
+    # If no headers found, split by double newline only
+    if not parts:
+        for i, block in enumerate(re.split(r"\n\s*\n", normalized)):
+            block = block.strip()
+            if not block:
+                continue
+            start = normalized.find(block, 0)
+            if start < 0:
+                start = sum(len(p[1]) for p in parts)
+            parts.append((start, block, None))
+
+    # Build chunks within max_chunk_chars, keeping section context
+    current_text: List[str] = []
+    current_len = 0
+    chunk_start = 0
+    chunk_section: Optional[str] = None
+    for start, text, section in parts:
+        if current_len + len(text) + 1 <= max_chunk_chars:
+            if not current_text:
+                chunk_start = start
+                chunk_section = section
+            current_text.append(text)
+            current_len += len(text) + 1
+        else:
+            if current_text:
+                full = " \n".join(current_text)
+                chunks.append({
+                    "text": full,
+                    "start": chunk_start,
+                    "end": chunk_start + len(full),
+                    "section": chunk_section,
+                })
+            # Start new chunk; optionally carry over overlap
+            overlap = ""
+            if overlap_chars > 0 and current_text:
+                overlap = " \n".join(current_text)[-overlap_chars:]
+            current_text = [overlap + text] if overlap else [text]
+            current_len = len(current_text[0])
+            chunk_start = start
+            chunk_section = section
+    if current_text:
+        full = " \n".join(current_text)
+        chunks.append({
+            "text": full,
+            "start": chunk_start,
+            "end": chunk_start + len(full),
+            "section": chunk_section,
+        })
+    return chunks
+
+
+def _chunk_score(chunk_text: str, query_terms: List[str]) -> float:
+    """Score a chunk by keyword overlap (case-insensitive)."""
+    lower = chunk_text.lower()
+    return sum(1 for t in query_terms if t.lower() in lower)
+
+
+def query_pdf_chunks(
+    chunks: List[Dict[str, Any]],
+    query: str,
+    top_k: int = 5,
+) -> List[Dict[str, Any]]:
+    """Return the top-k chunks most relevant to a query (keyword overlap).
+
+    Query is split into words; chunks are scored by how many query terms they contain.
+    Ties are broken by chunk length (prefer shorter, more focused chunks).
+
+    Args:
+        chunks: Output of chunk_pdf_semantic().
+        query: Search phrase or space-separated keywords.
+        top_k: Max number of chunks to return.
+
+    Returns:
+        List of chunk dicts with an added "score" field, sorted by relevance.
+    """
+    if not chunks or not query.strip():
+        return []
+
+    terms = [t.strip() for t in query.split() if t.strip()]
+    if not terms:
+        return chunks[:top_k]
+
+    scored: List[Dict[str, Any]] = []
+    for c in chunks:
+        text = c.get("text", "")
+        score = _chunk_score(text, terms)
+        scored.append({**c, "score": score})
+
+    scored.sort(key=lambda x: (-x["score"], len(x.get("text", ""))))
+    return [c for c in scored if c["score"] > 0][:top_k]
+
+
+def get_pdf_chunks_for_keywords(
+    pdf_content: str,
+    keywords: List[str],
+    max_chunk_chars: int = 1200,
+    top_k_per_keyword: int = 2,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Chunk the PDF semantically and return relevant chunks per keyword.
+
+    Convenience API: chunk once, then for each keyword run a query and store
+    the top chunks. Useful for rubric-driven extraction (e.g. theoretical depth).
+
+    Args:
+        pdf_content: Full PDF text.
+        keywords: List of terms to search for.
+        max_chunk_chars: Passed to chunk_pdf_semantic.
+        top_k_per_keyword: Max chunks to return per keyword.
+
+    Returns:
+        Dict mapping each keyword to a list of chunk dicts (with "score").
+    """
+    chunks = chunk_pdf_semantic(pdf_content, max_chunk_chars=max_chunk_chars)
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    for kw in keywords:
+        result[kw] = query_pdf_chunks(chunks, kw, top_k=top_k_per_keyword)
+    return result
