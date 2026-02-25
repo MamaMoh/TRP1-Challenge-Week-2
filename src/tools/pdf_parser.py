@@ -207,7 +207,8 @@ def verify_file_claims(pdf_content: str, repo_files: List[str]) -> Dict[str, boo
     for pattern in file_patterns:
         matches = re.findall(pattern, pdf_content)
         for match in matches:
-            if match not in mentioned_files:
-                mentioned_files[match] = match in repo_file_set
+            key = match.strip().replace("\\", "/").lstrip("./")
+            if key and key not in mentioned_files:
+                mentioned_files[key] = key in repo_file_set
     
     return mentioned_files

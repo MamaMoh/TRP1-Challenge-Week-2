@@ -214,14 +214,16 @@ def analyze_graph_structure(repo_path: str) -> Dict[str, Any]:
             f"Sync node: {has_sync_node}, Conditional edges: {has_conditional_edges}, "
             f"Total edges: {edge_count}"
         )
-        
+        # Full graph definition so judges can see conditional edges and full flow
+        snippet_len = 4000
+        graph_structure = content[:snippet_len] if len(content) > snippet_len else content
         return {
             "has_parallel_execution": has_stategraph and has_parallel_edges,
             "has_fan_out": has_fan_out,
             "has_fan_in": has_fan_in,
             "has_conditional_edges": has_conditional_edges,
             "has_sync_node": has_sync_node,
-            "graph_structure": content[:1500] if len(content) > 1500 else content,
+            "graph_structure": graph_structure,
             "file_path": "src/graph.py",
             "rationale": rationale,
             "confidence": confidence
@@ -296,9 +298,17 @@ def verify_safe_tool_engineering(repo_path: str) -> Dict[str, Any]:
                     if "subprocess" in content and "subprocess.run" in content:
                         uses_subprocess = True
                     
-                    # Check for dangerous os.system
-                    if "os.system" in content:
-                        has_os_system = True
+                    # Only flag actual os.system(...) calls (AST), not string checks or comments
+                    try:
+                        tree = ast.parse(content)
+                        for node in ast.walk(tree):
+                            if isinstance(node, ast.Call):
+                                if isinstance(node.func, ast.Attribute):
+                                    if getattr(node.func.value, "id", None) == "os" and node.func.attr == "system":
+                                        has_os_system = True
+                                        break
+                    except SyntaxError:
+                        pass
                     
                     # Check for error handling
                     if "try:" in content and "except" in content:
@@ -359,7 +369,11 @@ def verify_structured_output(repo_path: str) -> Dict[str, Any]:
             "structured_output" in content
         )
         
-        uses_pydantic = "JudicialOpinion" in content and "Pydantic" in content
+        # Pydantic schema: bound to JudicialOpinion (with_structured_output(JudicialOpinion)) implies Pydantic
+        uses_pydantic = (
+            ("JudicialOpinion" in content and "Pydantic" in content) or
+            ("with_structured_output" in content and "JudicialOpinion" in content)
+        )
         
         has_retry = (
             "retry" in content.lower() or
