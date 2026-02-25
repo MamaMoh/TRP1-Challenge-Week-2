@@ -54,15 +54,18 @@ class AgentState(TypedDict):
     """Main state for the Automaton Auditor graph.
 
     Uses reducers (operator.ior, operator.add) to safely handle parallel execution.
+    Judges store opinions as dicts (model_dump) to avoid Pydantic serialization warnings
+    when LangGraph merges state; chief_justice normalizes back to JudicialOpinion.
     """
     repo_url: str
     pdf_path: str
-    rubric_path: Optional[str]  # Path to rubric JSON (for reporting); may be empty
+    pdf_display: Optional[str]  # Original PDF URL or path for report (user-facing)
+    rubric_path: Optional[str]
     rubric_dimensions: List[Dict]
-    synthesis_rules: Dict  # From rubric JSON; Chief Justice uses this
+    synthesis_rules: Dict
 
     evidences: Annotated[Dict[str, List[Evidence]], operator.ior]
-    opinions: Annotated[List[JudicialOpinion], operator.add]
+    opinions: Annotated[List[Dict], operator.add]  # Dicts from model_dump(); chief_justice converts to JudicialOpinion
     errors: Annotated[List[str], operator.add]
 
     final_report: Optional[AuditReport]
