@@ -1,47 +1,123 @@
-"""Utility to serialize AuditReport to Markdown."""
+"""Serialize AuditReport to clean, structured Markdown."""
 from src.state import AuditReport, CriterionResult
 
 
+def _score_bar(score: int, max_score: int = 5) -> str:
+    """Return a simple text score indicator."""
+    filled = "■" * score
+    empty = "□" * (max_score - score)
+    return filled + empty + f" {score}/{max_score}"
+
+
 def serialize_report_to_markdown(report: AuditReport) -> str:
-    """Convert AuditReport Pydantic model to Markdown string.
-    
-    Args:
-        report: AuditReport model instance
-        
-    Returns:
-        Markdown-formatted string
-    """
-    sections = []
-    
-    # Header
-    sections.append("# Automaton Auditor Report\n")
-    sections.append(report.executive_summary)
-    sections.append("\n")
-    
-    # Criterion Breakdown
-    sections.append("## Criterion Breakdown\n\n")
-    
-    for criterion in report.criteria:
-        sections.append("### " + str(criterion.dimension_name) + " (" + str(criterion.dimension_id) + ")\n\n")
-        sections.append("**Final Score:** " + str(criterion.final_score) + "/5\n\n")
+    """Convert AuditReport to well-structured, readable Markdown."""
+    lines = []
 
-        # Judge Opinions (use concatenation so LLM output with { } doesn't break format)
-        sections.append("**Judge Opinions:**\n\n")
-        for opinion in criterion.judge_opinions:
-            sections.append("- **" + str(opinion.judge) + "** (Score: " + str(opinion.score) + "/5): " + str(opinion.argument) + "\n")
-            if opinion.cited_evidence:
-                sections.append("  - Cited Evidence: " + ", ".join(str(x) for x in opinion.cited_evidence[:5]) + "\n")
-        sections.append("\n")
+    # ---- Title ----
+    lines.append("# Automaton Auditor — Audit Report")
+    lines.append("")
+    lines.append("> Independent forensic evaluation by the Digital Courtroom (Detectives → Judges → Chief Justice)")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
 
-        # Dissent Summary
-        if criterion.dissent_summary:
-            sections.append("**Dissent Summary:** " + str(criterion.dissent_summary) + "\n\n")
+    # ---- Metadata ----
+    pdf_display = "—"
+    for line in report.executive_summary.split("\n"):
+        if "**PDF Report:**" in line:
+            pdf_display = line.replace("**PDF Report:**", "").strip()
+            break
+    summary_line = ""
+    for line in report.executive_summary.split("\n"):
+        if "**Summary:**" in line:
+            summary_line = line.replace("**Summary:**", "").strip()
+            break
 
-        # Remediation for this criterion
-        sections.append("**Remediation:** " + str(criterion.remediation) + "\n\n")
-        sections.append("---\n\n")
-    
-    # Consolidated Remediation Plan
-    sections.append(report.remediation_plan)
-    
-    return "\n".join(sections)
+    lines.append("## Audit metadata")
+    lines.append("")
+    lines.append("| Field | Value |")
+    lines.append("|-------|--------|")
+    lines.append("| **Repository** | " + _cell(report.repo_url) + " |")
+    lines.append("| **PDF report** | " + _cell(pdf_display) + " |")
+    lines.append("| **Overall score** | **" + f"{report.overall_score:.2f}" + " / 5.0** |")
+    lines.append("")
+    if summary_line:
+        lines.append(summary_line)
+        lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # ---- Score overview table ----
+    lines.append("## Score overview")
+    lines.append("")
+    lines.append("| Criterion | Score | Bar |")
+    lines.append("|-----------|-------|-----|")
+    for c in report.criteria:
+        name = _cell(c.dimension_name)
+        bar = _score_bar(c.final_score)
+        lines.append(f"| {name} | {c.final_score}/5 | {bar} |")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    # ---- Criterion breakdown ----
+    lines.append("## Criterion breakdown")
+    lines.append("")
+
+    for i, c in enumerate(report.criteria, 1):
+        lines.append(f"### {i}. {c.dimension_name}")
+        lines.append("")
+        lines.append(f"**Final score:** {_score_bar(c.final_score)}")
+        lines.append("")
+
+        lines.append("#### Judge opinions")
+        lines.append("")
+        for o in c.judge_opinions:
+            lines.append(f"**{o.judge}** — {_score_bar(o.score)}")
+            lines.append("")
+            lines.append("> " + _quote_escape(str(o.argument)))
+            if o.cited_evidence:
+                lines.append("")
+                lines.append("  *Cited evidence:* " + ", ".join(str(x) for x in o.cited_evidence[:6]) + (" …" if len(o.cited_evidence) > 6 else ""))
+            lines.append("")
+
+        # Dissent summary
+        if c.dissent_summary:
+            lines.append("#### Dissent summary")
+            lines.append("")
+            lines.append("> " + _quote_escape(str(c.dissent_summary)))
+            lines.append("")
+
+        # Remediation
+        lines.append("#### Remediation")
+        lines.append("")
+        lines.append(_indent(str(c.remediation)))
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    # ---- Remediation plan ----
+    lines.append("## Remediation plan (consolidated)")
+    lines.append("")
+    lines.append(report.remediation_plan.strip())
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("*Report generated by Automaton Auditor.*")
+
+    return "\n".join(lines)
+
+
+def _cell(s: str) -> str:
+    """Escape pipe and newline for Markdown table cell."""
+    return str(s).replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _quote_escape(s: str) -> str:
+    """Escape > for blockquote content."""
+    return str(s).replace("\n", "\n> ").strip()
+
+
+def _indent(s: str, prefix: str = "  ") -> str:
+    """Indent multi-line text."""
+    return "\n".join(prefix + line for line in str(s).strip().split("\n"))

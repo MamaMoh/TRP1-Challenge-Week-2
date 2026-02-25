@@ -123,24 +123,19 @@ Render your verdict. Be critical. Hunt for flaws."""
             opinion = chain.invoke({})
             opinion.judge = "Prosecutor"
             opinion.criterion_id = criterion_id
-            
-            # Ensure argument is substantial
             if len(opinion.argument) < 50:
                 opinion.argument += " (Insufficient evidence or implementation flaws detected.)"
-            
-            opinions.append(opinion)
+            opinions.append(opinion.model_dump())
             logger.debug(f"Prosecutor: Opinion for {criterion_id} - Score: {opinion.score}")
         except Exception as e:
             logger.error(f"Prosecutor: Error evaluating {criterion_id}: {str(e)}")
-            # Fallback: create opinion with score 1
             opinions.append(JudicialOpinion(
                 judge="Prosecutor",
                 criterion_id=criterion_id,
                 score=1,
                 argument=f"Error evaluating evidence: {str(e)}. Insufficient evidence to form confident opinion.",
                 cited_evidence=[]
-            ))
-    
+            ).model_dump())
     logger.info(f"Prosecutor: Generated {len(opinions)} opinions")
     return {"opinions": opinions}
 
@@ -207,22 +202,17 @@ Render your verdict. Be charitable. Look for effort and intent."""
             opinion = chain.invoke({})
             opinion.judge = "Defense"
             opinion.criterion_id = criterion_id
-            
-            # Ensure argument is substantial
             if len(opinion.argument) < 50:
                 opinion.argument += " (Evidence suggests effort and intent, though implementation may be incomplete.)"
-            
-            opinions.append(opinion)
+            opinions.append(opinion.model_dump())
         except Exception as e:
-            # Fallback: create opinion with score 1
             opinions.append(JudicialOpinion(
                 judge="Defense",
                 criterion_id=criterion_id,
                 score=1,
                 argument=f"Error evaluating evidence: {str(e)}. Insufficient evidence to form confident opinion.",
                 cited_evidence=[]
-            ))
-    
+            ).model_dump())
     return {"opinions": opinions}
 
 
@@ -288,20 +278,15 @@ Render your verdict. Be pragmatic. Focus on technical merit."""
             opinion = chain.invoke({})
             opinion.judge = "TechLead"
             opinion.criterion_id = criterion_id
-            
-            # Ensure argument is substantial
             if len(opinion.argument) < 50:
                 opinion.argument += " (Technical assessment limited by insufficient evidence.)"
-            
-            opinions.append(opinion)
+            opinions.append(opinion.model_dump())
         except Exception as e:
-            # Fallback: create opinion with score 1
             opinions.append(JudicialOpinion(
                 judge="TechLead",
                 criterion_id=criterion_id,
                 score=1,
                 argument=f"Error evaluating evidence: {str(e)}. Insufficient evidence to form confident opinion.",
                 cited_evidence=[]
-            ))
-    
+            ).model_dump())
     return {"opinions": opinions}

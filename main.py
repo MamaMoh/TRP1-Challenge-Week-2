@@ -1,22 +1,17 @@
 """CLI entry point for Automaton Auditor."""
+# Suppress third-party warnings (must run before langchain/pydantic are imported)
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+warnings.filterwarnings("ignore", category=UserWarning, module="langchain")
+
 import argparse
 import json
+import logging
 import os
 import sys
-import warnings
 from pathlib import Path
 
-# Suppress noisy warnings from LangChain/Pydantic when using with_structured_output(JudicialOpinion)
-warnings.filterwarnings(
-    "ignore",
-    message=".*serialized value may not be as expected.*",
-    category=UserWarning,
-)
-warnings.filterwarnings(
-    "ignore",
-    message=".*Pydantic V1 functionality isn't compatible with Python 3.14.*",
-    category=UserWarning,
-)
+logging.getLogger("RapidOCR").setLevel(logging.WARNING)
 
 from src.config import load_rubric, load_env_config, list_available_rubrics
 from src.graph import build_auditor_graph
@@ -25,6 +20,21 @@ from src.state import AgentState
 from src.tools.pdf_parser import is_pdf_url, download_pdf_from_url
 from src.utils.report_serializer import serialize_report_to_markdown
 from src.utils.logger import setup_logger
+
+
+def _box(text: str, width: int = 52) -> str:
+    """Return a simple box around one line of text."""
+    t = text[: width - 4].center(width - 4)
+    border = "+" + "-" * (width - 2) + "+"
+    return border + "\n|" + t + "|\n" + border
+
+
+def _step(msg: str, status: str = "") -> None:
+    """Print a step line (optionally with status)."""
+    if status:
+        print(f"  [{status}] {msg}")
+    else:
+        print(f"  >> {msg}")
 
 
 def validate_repo_url(url: str) -> bool:
@@ -105,68 +115,70 @@ def main():
             print(f"  rubric/{p.name}")
         sys.exit(0)
 
-    # Require repo and pdf for audit
     if not args.repo or not args.pdf:
         parser.error("--repo and --pdf are required to run an audit (or use --list-rubrics)")
 
-    # Setup logging
     logger = setup_logger(verbose=args.verbose)
     logger.info("Automaton Auditor starting...")
 
-    # Input validation
+    print()
+    print(_box("AUTOMATON AUDITOR"))
+    print("  Deep LangGraph Swarms for Autonomous Governance")
+    print()
+
     if not validate_repo_url(args.repo):
-        print(f"ERROR: Repository: Invalid GitHub URL format: {args.repo}", file=sys.stderr)
+        print(f"ERROR: Invalid GitHub URL: {args.repo}", file=sys.stderr)
         sys.exit(1)
 
+    _step("Resolving PDF input...")
     try:
         pdf_path = resolve_pdf_input(args.pdf)
-        if args.verbose and is_pdf_url(args.pdf):
-            print(f"✓ Downloaded PDF from URL to {pdf_path}")
+        if is_pdf_url(args.pdf):
+            _step("PDF downloaded from URL", "OK")
+        else:
+            _step("Using local PDF path", "OK")
     except FileNotFoundError as e:
-        print(f"ERROR: PDF: {e}", file=sys.stderr)
+        print(f"ERROR: PDF not found: {e}", file=sys.stderr)
         sys.exit(1)
     except RuntimeError as e:
-        print(f"ERROR: PDF download: {e}", file=sys.stderr)
+        print(f"ERROR: PDF download failed: {e}", file=sys.stderr)
         sys.exit(1)
 
     rubric_path = args.rubric or str(DEFAULT_RUBRIC_PATH)
     output_dir = args.output or str(REPORT_ON_SELF)
     ensure_dirs()
 
-    # Load and validate rubric
+    _step("Loading rubric...")
     try:
         rubric = load_rubric(rubric_path)
-        if args.verbose:
-            print(f"✓ Loaded rubric: {rubric_path} ({len(rubric['dimensions'])} dimensions)")
+        _step(f"Rubric loaded: {len(rubric['dimensions'])} dimensions", "OK")
     except FileNotFoundError as e:
-        print(f"ERROR: Rubric: {e}", file=sys.stderr)
+        print(f"ERROR: Rubric file not found: {e}", file=sys.stderr)
         sys.exit(1)
     except (json.JSONDecodeError, ValueError) as e:
-        print(f"ERROR: Rubric: Invalid rubric file - {e}", file=sys.stderr)
+        print(f"ERROR: Invalid rubric: {e}", file=sys.stderr)
         sys.exit(1)
-    
-    # Load environment configuration
+
+    _step("Loading environment configuration...")
     try:
         config = load_env_config()
-        if args.verbose:
-            print("✓ Environment configuration loaded")
+        _step("API configuration ready", "OK")
     except ValueError as e:
-        print(f"ERROR: Configuration: {e}", file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(2)
-    
-    # Configure LangSmith tracing
-    if args.trace or config["langchain_tracing_v2"]:
+
+    if args.trace or config.get("langchain_tracing_v2"):
         os.environ["LANGCHAIN_TRACING_V2"] = "true"
-        if config["langchain_api_key"]:
+        if config.get("langchain_api_key"):
             os.environ["LANGCHAIN_API_KEY"] = config["langchain_api_key"]
-        os.environ["LANGCHAIN_PROJECT"] = config["langchain_project"]
-        if args.verbose:
-            print("✓ LangSmith tracing enabled")
+        os.environ["LANGCHAIN_PROJECT"] = config.get("langchain_project", "automaton-auditor")
+        _step("LangSmith tracing enabled", "OK")
     
-    # Initialize state
+    # Initialize state (pdf_display = original URL/path for report; pdf_path = resolved path for processing)
     initial_state: AgentState = {
         "repo_url": args.repo,
         "pdf_path": pdf_path,
+        "pdf_display": args.pdf,
         "rubric_path": rubric_path,
         "rubric_dimensions": rubric["dimensions"],
         "synthesis_rules": rubric.get("synthesis_rules", {}),
@@ -176,19 +188,14 @@ def main():
         "final_report": None,
     }
     
-    # Build and execute graph
-    if args.verbose:
-        print("Building auditor graph...")
-    
+    print()
+    _step("Building audit graph (detectives → judges → chief justice)...")
     graph = build_auditor_graph()
-    
-    if args.verbose:
-        print("Executing audit workflow...")
-    
+    _step("Running audit workflow (this may take a minute)...")
+    print()
+
     try:
         final_state = graph.invoke(initial_state)
-        
-        # Check for synthesis failure
         audit_report = final_state.get("final_report")
         if not audit_report:
             print("ERROR: Synthesis failed - no report generated", file=sys.stderr)
@@ -200,6 +207,8 @@ def main():
             debug_path = out_dir / "debug_state.json"
 
             def _to_dict(obj):
+                if isinstance(obj, dict):
+                    return obj
                 return obj.model_dump() if hasattr(obj, "model_dump") else obj.dict()
 
             with open(debug_path, "w", encoding="utf-8") as f:
@@ -222,25 +231,24 @@ def main():
         
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(markdown_content)
-        
-        # Also save JSON version for programmatic access
+
         json_path = Path(output_dir) / "audit_report.json"
         report_dict = audit_report.model_dump() if hasattr(audit_report, "model_dump") else audit_report.dict()
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(report_dict, f, indent=2)
-        
-        print(f"✓ Audit complete. Report saved to: {report_path}")
-        print(f"✓ JSON report saved to: {json_path}")
-        
-        # Compare with peer report if requested
+
+        print(_box("AUDIT COMPLETE"))
+        print()
+        print("  Report (Markdown):  " + str(report_path))
+        print("  Report (JSON):     " + str(json_path))
+        print("  Overall score:     " + f"{audit_report.overall_score:.2f}" + " / 5.0")
+        print()
+
         if args.compare:
             from src.utils.report_parser import compare_reports
             try:
                 comparison = compare_reports(str(report_path), args.compare)
-                print("\n" + "="*60)
-                print("COMPARISON WITH PEER REPORT")
-                print("="*60)
-                
+                print("  --- Comparison with peer report ---")
                 if comparison["overall_score_difference"] is not None:
                     diff = comparison["overall_score_difference"]
                     print(f"Overall Score Difference: {diff:+.2f} points")
@@ -262,9 +270,8 @@ def main():
             except Exception as e:
                 print(f"⚠ Comparison failed: {str(e)}", file=sys.stderr)
         
-        if args.trace or config["langchain_tracing_v2"]:
-            print(f"[LangSmith Trace: Check LangSmith dashboard for trace URL]")
-        
+        if args.trace or config.get("langchain_tracing_v2"):
+            print("  LangSmith: View trace in your LangSmith dashboard.")
         if final_state.get("errors"):
             print(f"⚠ Warnings: {len(final_state['errors'])} errors encountered during execution", file=sys.stderr)
             if args.verbose:

@@ -17,7 +17,12 @@ def chief_justice_node(state: AgentState) -> AgentState:
     Runs only when all three judges have submitted opinions (one per dimension each).
     Otherwise returns no state update so the last invocation (with full state) produces the report.
     """
-    opinions = state.get("opinions") or []
+    opinions_raw = state.get("opinions") or []
+    # Normalize: state stores dicts (from model_dump) to avoid Pydantic serialization warnings
+    opinions: List[JudicialOpinion] = [
+        JudicialOpinion(**o) if isinstance(o, dict) else o
+        for o in opinions_raw
+    ]
     dimensions = state.get("rubric_dimensions") or []
     expected_opinions = len(dimensions) * NUM_JUDGES
 
@@ -48,7 +53,7 @@ def chief_justice_node(state: AgentState) -> AgentState:
     
     # Group opinions by criterion
     opinions_by_criterion: Dict[str, List[JudicialOpinion]] = {}
-    for opinion in state["opinions"]:
+    for opinion in opinions:
         if opinion.criterion_id not in opinions_by_criterion:
             opinions_by_criterion[opinion.criterion_id] = []
         opinions_by_criterion[opinion.criterion_id].append(opinion)
@@ -158,11 +163,12 @@ def chief_justice_node(state: AgentState) -> AgentState:
     # Calculate overall score
     overall_score = total_score / criterion_count if criterion_count > 0 else 0.0
     
-    # Generate executive summary (concatenation to avoid brace-format errors in URLs/paths)
+    # Use original PDF URL/path in report (pdf_display), not the resolved download path
+    pdf_for_report = state.get("pdf_display") or state.get("pdf_path") or ""
     executive_summary = (
         "**Automaton Auditor Report**\n\n"
         "**Target Repository:** " + str(state.get("repo_url", "")) + "\n"
-        "**PDF Report:** " + str(state.get("pdf_path", "")) + "\n\n"
+        "**PDF Report:** " + str(pdf_for_report) + "\n\n"
         "**Overall Score:** " + f"{overall_score:.2f}" + "/5.0\n\n"
         "**Summary:** Evaluated " + str(criterion_count) + " criteria across forensic accuracy, judicial nuance, "
         "graph orchestration, and documentation quality. "
