@@ -1,7 +1,96 @@
 """PDF parsing tools for document analysis."""
+import re
+import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Dict, Any, List
-from docling import DocumentConverter
+
+# Try to import DocumentConverter with fallback
+try:
+    from docling.document_converter import DocumentConverter
+    DOCLING_AVAILABLE = True
+except ImportError:
+    try:
+        from docling import DocumentConverter
+        DOCLING_AVAILABLE = True
+    except ImportError:
+        DOCLING_AVAILABLE = False
+        DocumentConverter = None
+
+
+def is_pdf_url(value: str) -> bool:
+    """Return True if value looks like an HTTP(S) URL (for PDF)."""
+    return value.strip().startswith(("http://", "https://"))
+
+
+# Google Drive share URL: .../file/d/FILE_ID/view... or .../open?id=FILE_ID
+_GD_FILE_ID_RE = re.compile(
+    r"drive\.google\.com/(?:file/d/|open\?id=)([a-zA-Z0-9_-]+)"
+)
+
+
+def _normalize_download_url(url: str) -> str:
+    """Convert Google Drive share URLs to direct download URL. Other URLs unchanged."""
+    url = url.strip()
+    match = _GD_FILE_ID_RE.search(url)
+    if match:
+        file_id = match.group(1)
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return url
+
+
+def download_pdf_from_url(url: str, dest_dir: str = None) -> str:
+    """Download a PDF from URL to a local file.
+
+    Supports direct PDF URLs and Google Drive share links (converted to direct download).
+
+    Args:
+        url: HTTP(S) URL to the PDF, or Google Drive share link.
+        dest_dir: Directory to save the file (default: tempfile.gettempdir()).
+
+    Returns:
+        Absolute path to the downloaded PDF file.
+
+    Raises:
+        ValueError: If URL is not http(s).
+        RuntimeError: If download fails or response is not a PDF.
+    """
+    if not is_pdf_url(url):
+        raise ValueError(f"Not an HTTP(S) URL: {url}")
+
+    url = _normalize_download_url(url)
+
+    dest_dir = dest_dir or tempfile.gettempdir()
+    Path(dest_dir).mkdir(parents=True, exist_ok=True)
+    safe_name = "downloaded_report.pdf"
+    dest_path = Path(dest_dir) / safe_name
+
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; rv:91.0) Gecko/20100101 Firefox/91.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = resp.read()
+            content_type = resp.headers.get("Content-Type", "").lower()
+            is_pdf_content = data.startswith(b"%PDF")
+            if is_pdf_content:
+                pass
+            elif "pdf" in content_type or "octet-stream" in content_type:
+                pass
+            elif "text/html" in content_type or (not is_pdf_content and len(data) > 0):
+                raise RuntimeError(
+                    "URL did not return a PDF (got HTML or other content). "
+                    "For Google Drive: use a link shared with 'Anyone with the link', or try the direct download format: "
+                    "https://drive.google.com/uc?export=download&id=FILE_ID"
+                )
+            else:
+                raise RuntimeError(f"URL did not return a PDF (Content-Type: {content_type})")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"PDF download failed: HTTP {e.code} {e.reason}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"PDF download failed: {e.reason}") from e
+
+    dest_path.write_bytes(data)
+    return str(dest_path.resolve())
 
 
 def parse_pdf(pdf_path: str) -> str:
@@ -22,10 +111,52 @@ def parse_pdf(pdf_path: str) -> str:
     if not pdf_file.exists():
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
     
+    # Try Docling first (if available and working)
+    if DOCLING_AVAILABLE and DocumentConverter:
+        try:
+            converter = DocumentConverter()
+            doc = converter.convert(str(pdf_file))
+            # Handle different docling API versions
+            if hasattr(doc, 'document'):
+                return doc.document.export_to_markdown()
+            elif hasattr(doc, 'export_to_markdown'):
+                return doc.export_to_markdown()
+            else:
+                # Fallback: try to get text content
+                return str(doc)
+        except (OSError, ImportError, Exception) as e:
+            # If docling fails (e.g., Windows security policy blocking pypdfium2),
+            # fall back to pypdf
+            pass
+    
+    # Fallback to pypdf (lighter weight, more reliable, works on Windows)
     try:
-        converter = DocumentConverter()
-        doc = converter.convert(str(pdf_file))
-        return doc.document.export_to_markdown()
+        import pypdf
+        with open(pdf_file, 'rb') as file:
+            pdf_reader = pypdf.PdfReader(file)
+            text_content = []
+            for page_num, page in enumerate(pdf_reader.pages):
+                try:
+                    text_content.append(page.extract_text())
+                except Exception as page_error:
+                    # Skip pages that fail to extract
+                    text_content.append(f"[Page {page_num + 1}: Extraction failed]")
+            return '\n'.join(text_content)
+    except ImportError:
+        # If pypdf is not available, try PyPDF2
+        try:
+            import PyPDF2
+            with open(pdf_file, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                text_content = []
+                for page in pdf_reader.pages:
+                    text_content.append(page.extract_text())
+                return '\n'.join(text_content)
+        except ImportError:
+            raise RuntimeError(
+                "PDF parsing failed: Neither docling, pypdf, nor PyPDF2 are available. "
+                "Please install one of: pypdf (recommended), PyPDF2, or fix docling installation"
+            ) from None
     except Exception as e:
         raise RuntimeError(f"PDF parsing failed: {str(e)}") from e
 

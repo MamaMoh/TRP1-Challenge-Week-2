@@ -36,6 +36,13 @@ cp .env.example .env
 # Edit .env with your API keys
 ```
 
+   **LLM Provider Options:**
+   - **OpenAI** (default): Set `OPENAI_API_KEY=sk-your-key-here`
+   - **OpenRouter** (supports multiple models): Set `OPENROUTER_API_KEY=your-key-here`
+     - OpenRouter allows access to Claude, Gemini, and other models
+     - Set `LLM_MODEL=anthropic/claude-3.5-sonnet` for Claude
+     - Set `LLM_MODEL=google/gemini-pro` for Gemini
+
 3. **Run the auditor:**
 ```bash
 uv run python main.py --repo <repo_url> --pdf <pdf_path>
