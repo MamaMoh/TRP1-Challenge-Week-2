@@ -26,6 +26,28 @@ def validate_repo_url(url: str) -> bool:
     return url.startswith("https://github.com/") or url.startswith("git@github.com:")
 
 
+def _render_report_and_downloads(markdown_content: str, report_json_str: str, score: float) -> None:
+    """Render success message, download buttons, and report body. Used so downloads persist across re-runs."""
+    st.success(f"Audit complete. Overall score: **{score:.2f}** / 5.0")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            "Download report (Markdown)",
+            markdown_content,
+            file_name="audit_report.md",
+            mime="text/markdown",
+        )
+    with col2:
+        st.download_button(
+            "Download report (JSON)",
+            report_json_str,
+            file_name="audit_report.json",
+            mime="application/json",
+        )
+    st.subheader("Report")
+    st.markdown(markdown_content)
+
+
 def resolve_pdf_input(pdf_value: str, uploaded_file=None) -> tuple[str, str]:
     """Resolve PDF to a local path. Returns (local_path, display_label)."""
     if uploaded_file is not None:
@@ -48,6 +70,14 @@ st.set_page_config(
     page_icon="📋",
     layout="wide",
 )
+
+# Persist report in session so download buttons survive re-runs (Streamlit re-runs on any click)
+if "audit_report_md" not in st.session_state:
+    st.session_state.audit_report_md = None
+if "audit_report_json" not in st.session_state:
+    st.session_state.audit_report_json = None
+if "audit_report_score" not in st.session_state:
+    st.session_state.audit_report_score = None
 
 st.title("Automaton Auditor")
 st.caption("Deep LangGraph Swarms for Autonomous Governance")
@@ -195,28 +225,15 @@ def run_audit():
     report_json_path = out_dir / "audit_report.json"
     report_md_path.write_text(markdown_content, encoding="utf-8")
     report_dict = audit_report.model_dump() if hasattr(audit_report, "model_dump") else audit_report.dict()
-    report_json_path.write_text(json.dumps(report_dict, indent=2), encoding="utf-8")
+    report_json_str = json.dumps(report_dict, indent=2)
+    report_json_path.write_text(report_json_str, encoding="utf-8")
 
-    st.success(f"Audit complete. Overall score: **{audit_report.overall_score:.2f}** / 5.0")
+    # Persist in session so download buttons work after re-run (Streamlit re-runs on any click)
+    st.session_state.audit_report_md = markdown_content
+    st.session_state.audit_report_json = report_json_str
+    st.session_state.audit_report_score = audit_report.overall_score
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(
-            "Download report (Markdown)",
-            markdown_content,
-            file_name="audit_report.md",
-            mime="text/markdown",
-        )
-    with col2:
-        st.download_button(
-            "Download report (JSON)",
-            json.dumps(report_dict, indent=2),
-            file_name="audit_report.json",
-            mime="application/json",
-        )
-
-    st.subheader("Report")
-    st.markdown(markdown_content)
+    _render_report_and_downloads(markdown_content, report_json_str, audit_report.overall_score)
 
     if compare_upload:
         try:
@@ -254,3 +271,10 @@ def run_audit():
 
 if st.sidebar.button("Run audit", type="primary"):
     run_audit()
+elif st.session_state.get("audit_report_md"):
+    # Re-run after e.g. clicking Download: show report from session so download buttons work
+    _render_report_and_downloads(
+        st.session_state.audit_report_md,
+        st.session_state.audit_report_json,
+        st.session_state.audit_report_score,
+    )
