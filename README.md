@@ -57,9 +57,16 @@ The Automaton Auditor is a production-grade, hierarchical multi-agent system tha
 
 3. **Run an audit**
 
+   **CLI:**
    ```bash
    uv run python main.py --repo <repo_url> --pdf <path_or_url>
    ```
+
+   **Streamlit app:**
+   ```bash
+   uv run streamlit run app.py
+   ```
+   Configure repository URL, PDF (upload or URL/path), rubric, and options in the sidebar; click **Run audit** to generate the report.
 
 ## Reproducible workflow (exact steps)
 
@@ -86,6 +93,7 @@ For CI or a fresh machine: clone → `uv sync` → set env → `uv run python ma
 | **Custom output dir** | `python main.py -r <repo> -p <pdf> --output audit/report_onpeer_generated/` |
 | **Compare with peer report** | `python main.py -r <repo> -p <pdf> --compare path/to/peer_audit_report.md` |
 | **Verbose + tracing** | `python main.py -r <repo> -p <pdf> --verbose --trace` |
+| **Web UI (Streamlit)** | `uv run streamlit run app.py` |
 
 - **PDF**: Accepts a local path or an HTTP(S) URL. Google Drive share links are converted to direct-download URLs automatically.
 - **Rubric**: Default is `rubric/week2_rubric.json`. Use `--list-rubrics` to see available files.

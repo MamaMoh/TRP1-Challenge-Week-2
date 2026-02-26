@@ -13,6 +13,7 @@ dependencies = [
     "docling>=1.0.0",
     "langsmith>=0.1.0",
     "pypdf>=3.0.0",
+    "streamlit>=1.0.0",
 ]
 
 [project.optional-dependencies]
