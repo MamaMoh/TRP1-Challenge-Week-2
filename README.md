@@ -24,7 +24,8 @@ The Automaton Auditor is a production-grade, hierarchical multi-agent system tha
 ├── docs/                 # Architecture and design (e.g. architecture.md)
 ├── audit/                # Generated reports (report_onself_generated/, etc.)
 ├── tests/                # Unit and integration tests
-└── main.py               # CLI entry point
+├── main.py               # CLI entry point
+└── app.py                # Streamlit web UI entry point
 ```
 
 ## Setup
@@ -62,11 +63,7 @@ The Automaton Auditor is a production-grade, hierarchical multi-agent system tha
    uv run python main.py --repo <repo_url> --pdf <path_or_url>
    ```
 
-   **Streamlit app:**
-   ```bash
-   uv run streamlit run app.py
-   ```
-   Configure repository URL, PDF (upload or URL/path), rubric, and options in the sidebar; click **Run audit** to generate the report.
+   **Streamlit app:** see [Running the Streamlit app](#running-the-streamlit-app) below.
 
 ## Reproducible workflow (exact steps)
 
@@ -101,6 +98,55 @@ For CI or a fresh machine: clone → `uv sync` → set env → `uv run python ma
 - **PDF**: Accepts a local path or an HTTP(S) URL. Google Drive share links are converted to direct-download URLs automatically.
 - **Rubric**: Default is `rubric/week2_rubric.json`. Use `--list-rubrics` to see available files.
 - **Repository**: The auditor clones the repo and analyzes the **default branch** only (remote HEAD, typically `main` or `master`). No branch option is supported; ensure the branch you want audited is the default on the remote.
+
+## Running the Streamlit app
+
+The web UI runs the same audit pipeline as the CLI. Use it to configure inputs in the sidebar and download the report from the browser.
+
+1. **Install and set environment** (if not already done):
+   ```bash
+   uv sync
+   cp .env.example .env
+   # Edit .env and set OPENAI_API_KEY or OPENROUTER_API_KEY
+   ```
+
+2. **Start the app** from the project root:
+   ```bash
+   uv run streamlit run app.py
+   ```
+
+3. **Open in browser** — Streamlit prints a local URL (e.g. `http://localhost:8501`). Open it in your browser.
+
+4. **Configure in the sidebar:**
+   - **GitHub repository URL** — optional; leave empty for PDF-only audit.
+   - **PDF input** — choose "Upload file" or "URL or path", then provide the PDF.
+   - **Rubric** — select the rubric file (default: week2).
+   - **Output directory** — where reports are saved (default: `audit/report_onself_generated/`).
+   - Optionally: upload a peer report for comparison, or enable Verbose logging / LangSmith tracing.
+
+5. **Run the audit** — click **Run audit** in the sidebar. Wait for the spinner to finish.
+
+6. **View and download** — the report appears below. Use **Download report (Markdown)** or **Download report (JSON)** to save it. The report stays visible after download (session state is preserved).
+
+To stop the app: press `Ctrl+C` in the terminal.
+
+## Screenshots
+
+*(Add your screenshots below. Suggested images: Streamlit home/sidebar, audit result with report and download buttons.)*
+
+| Description | Screenshot |
+|-------------|------------|
+| Streamlit app — configuration sidebar and run audit | *(Insert image: e.g. `docs/screenshots/streamlit-sidebar.png`)* |
+| Audit complete — report and download buttons | *(Insert image: e.g. `docs/screenshots/streamlit-report.png`)* |
+
+Example Markdown to replace the placeholders once you have image files:
+
+```markdown
+| Streamlit app — configuration sidebar and run audit | ![Streamlit sidebar](docs/screenshots/streamlit-sidebar.png) |
+| Audit complete — report and download buttons        | ![Streamlit report](docs/screenshots/streamlit-report.png)   |
+```
+
+If you store screenshots in `docs/screenshots/`, create that folder and add the image files there.
 
 ## Testing on peer vs by peer
 
