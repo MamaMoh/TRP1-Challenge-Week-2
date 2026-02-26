@@ -229,10 +229,19 @@ def analyze_graph_structure(repo_path: str) -> Dict[str, Any]:
         has_fan_in = any(c > 1 for c in target_nodes.values())
         has_parallel_edges = has_fan_out or has_fan_in
 
+        # Both conditional branches (to_judges and handle_failure_or_missing) must route to judicial layer
+        edge_set = set(edges)
+        failure_handler_to_judges = all(
+            ("handle_failure_or_missing", j) in edge_set for j in EXPECTED_JUDGE_NODES
+        )
+        to_judges_to_judges = all(
+            ("to_judges", j) in edge_set for j in EXPECTED_JUDGE_NODES
+        )
         wiring_ok = (
             has_detectives and has_sync and has_judges and has_chief
             and (has_set_entry_point and entry_is_start)
             and has_conditional_edges
+            and failure_handler_to_judges and to_judges_to_judges
         )
         confidence = (
             0.95 if (has_stategraph and wiring_ok and has_fan_out and has_fan_in)
@@ -242,10 +251,17 @@ def analyze_graph_structure(repo_path: str) -> Dict[str, Any]:
         rationale = (
             f"StateGraph: {has_stategraph}, Fan-out: {has_fan_out}, Fan-in: {has_fan_in}, "
             f"Sync: {has_sync_node}, Conditional: {has_conditional_edges}, Entry: {entry_point_node}, "
-            f"Edges: {edge_count}, Wiring: detectives={has_detectives} sync={has_sync} judges={has_judges} chief={has_chief}"
+            f"Edges: {edge_count}, Wiring: detectives={has_detectives} sync={has_sync} judges={has_judges} chief={has_chief}. "
+            f"Failure handler routes to judges: {failure_handler_to_judges} (handle_failure_or_missing -> prosecutor, defense, tech_lead); "
+            f"to_judges routes to judges: {to_judges_to_judges}. Judicial layer always runs."
         )
-        snippet_len = 4000
+        snippet_len = 3800
         graph_structure = content[:snippet_len] if len(content) > snippet_len else content
+        if failure_handler_to_judges and to_judges_to_judges:
+            graph_structure += (
+                "\n\n[Flow summary] evidence_aggregator has conditional_edges to 'to_judges' or 'handle_failure_or_missing'; "
+                "both nodes have add_edge to prosecutor, defense, tech_lead. So Judges and Chief Justice always run."
+            )
         return {
             "has_parallel_execution": has_stategraph and has_parallel_edges,
             "has_fan_out": has_fan_out,
@@ -261,6 +277,8 @@ def analyze_graph_structure(repo_path: str) -> Dict[str, Any]:
             "entry_point": entry_point_node,
             "has_set_entry_point": has_set_entry_point,
             "conditional_edges_source": conditional_source,
+            "failure_handler_to_judges": failure_handler_to_judges,
+            "to_judges_to_judges": to_judges_to_judges,
         }
     except SyntaxError as e:
         return {

@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from pydantic import ValidationError
 
 from src.state import AgentState, JudicialOpinion, Evidence
 from src.config import load_env_config
@@ -24,13 +25,21 @@ def _escape_braces_for_prompt(text: str) -> str:
 
 
 def _invoke_judicial_chain(chain, judge_name: str, criterion_id: str) -> Optional[JudicialOpinion]:
-    """Invoke chain with retries on validation/parse errors. Returns None if all retries fail."""
+    """Invoke chain with retries on validation/parse errors. Returns None if all retries fail.
+    Explicitly retries on Pydantic ValidationError (malformed LLM output) and other exceptions.
+    """
     last_error = None
     for attempt in range(JUDICIAL_OPINION_RETRIES):
         try:
             opinion = chain.invoke({})
             if opinion and isinstance(opinion, JudicialOpinion):
                 return opinion
+        except ValidationError as e:
+            last_error = e
+            logger.warning(
+                f"{judge_name}: Attempt {attempt + 1}/{JUDICIAL_OPINION_RETRIES} for {criterion_id} "
+                f"structured output validation failed: {e}"
+            )
         except Exception as e:
             last_error = e
             logger.warning(
