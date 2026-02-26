@@ -86,7 +86,9 @@ For CI or a fresh machine: clone → `uv sync` → set env → `uv run python ma
 
 | Action | Command |
 |--------|--------|
-| **Audit (local PDF)** | `python main.py -r https://github.com/user/repo.git -p ./report.pdf` |
+| **Audit repo only** | `python main.py -r https://github.com/user/repo.git` |
+| **Audit PDF only** | `python main.py -p ./report.pdf` or `-p "https://drive.google.com/..."` |
+| **Audit repo + PDF** | `python main.py -r https://github.com/user/repo.git -p ./report.pdf` |
 | **Audit (PDF URL)** | `python main.py -r https://github.com/user/repo.git -p "https://drive.google.com/..."` |
 | **List rubrics** | `python main.py --list-rubrics` |
 | **Custom rubric** | `python main.py -r <repo> -p <pdf> --rubric rubric/week2_rubric.json` |
@@ -95,6 +97,7 @@ For CI or a fresh machine: clone → `uv sync` → set env → `uv run python ma
 | **Verbose + tracing** | `python main.py -r <repo> -p <pdf> --verbose --trace` |
 | **Web UI (Streamlit)** | `uv run streamlit run app.py` |
 
+- **Repo and PDF are audited explicitly (not together).** Provide at least one of `--repo` or `--pdf`. Repo-only: audits repository dimensions (and diagram in repo). PDF-only: audits PDF report dimensions. Both: audits all dimensions.
 - **PDF**: Accepts a local path or an HTTP(S) URL. Google Drive share links are converted to direct-download URLs automatically.
 - **Rubric**: Default is `rubric/week2_rubric.json`. Use `--list-rubrics` to see available files.
 - **Repository**: The auditor clones the repo and analyzes the **default branch** only (remote HEAD, typically `main` or `master`). No branch option is supported; ensure the branch you want audited is the default on the remote.

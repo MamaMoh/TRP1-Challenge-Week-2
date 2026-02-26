@@ -54,10 +54,11 @@ st.caption("Deep LangGraph Swarms for Autonomous Governance")
 
 with st.sidebar:
     st.header("Configuration")
+    st.caption("Provide at least one: repo or PDF (audited explicitly, not together).")
     repo_url = st.text_input(
         "GitHub repository URL",
         placeholder="https://github.com/owner/repo",
-        help="Repository to audit.",
+        help="Repository to audit. Leave empty for PDF-only audit.",
     )
     pdf_mode = st.radio(
         "PDF input",
@@ -100,28 +101,29 @@ with st.sidebar:
     trace = st.checkbox("LangSmith tracing", value=False)
 
 def run_audit():
-    if not repo_url.strip():
-        st.error("Please enter a GitHub repository URL.")
+    has_repo = bool(repo_url and repo_url.strip())
+    has_pdf = (pdf_mode == "Upload file" and uploaded_pdf is not None) or (
+        pdf_mode == "URL or path" and pdf_path_or_url and pdf_path_or_url.strip()
+    )
+    if not has_repo and not has_pdf:
+        st.error("Provide at least one: repository URL or PDF (audit repo and PDF explicitly, not together).")
         return
-    if not validate_repo_url(repo_url.strip()):
+    if has_repo and not validate_repo_url(repo_url.strip()):
         st.error("Invalid GitHub URL. Use https://github.com/... or git@github.com:...")
         return
-    if pdf_mode == "Upload file" and uploaded_pdf is None:
-        st.error("Please upload a PDF report.")
-        return
-    if pdf_mode == "URL or path" and not (pdf_path_or_url and pdf_path_or_url.strip()):
-        st.error("Please enter a PDF URL or file path.")
-        return
 
-    pdf_value = pdf_path_or_url.strip() if pdf_mode == "URL or path" else ""
-    try:
-        pdf_path, pdf_display = resolve_pdf_input(pdf_value, uploaded_pdf)
-    except FileNotFoundError as e:
-        st.error(str(e))
-        return
-    except RuntimeError as e:
-        st.error(f"PDF download failed: {e}")
-        return
+    pdf_path = None
+    pdf_display = None
+    if has_pdf:
+        pdf_value = pdf_path_or_url.strip() if pdf_mode == "URL or path" else ""
+        try:
+            pdf_path, pdf_display = resolve_pdf_input(pdf_value, uploaded_pdf)
+        except FileNotFoundError as e:
+            st.error(str(e))
+            return
+        except RuntimeError as e:
+            st.error(f"PDF download failed: {e}")
+            return
 
     ensure_dirs()
     try:
@@ -131,6 +133,18 @@ def run_audit():
         return
     except (json.JSONDecodeError, ValueError) as e:
         st.error(f"Invalid rubric: {e}")
+        return
+
+    all_dims = rubric["dimensions"]
+    if has_repo and pdf_path:
+        rubric_dimensions = all_dims
+    elif has_repo:
+        rubric_dimensions = [d for d in all_dims if d.get("target_artifact") in ("github_repo", "pdf_images")]
+    else:
+        rubric_dimensions = [d for d in all_dims if d.get("target_artifact") == "pdf_report"]
+
+    if not rubric_dimensions:
+        st.error("No rubric dimensions match the provided artifact(s). Provide repo and/or PDF.")
         return
 
     try:
@@ -149,11 +163,11 @@ def run_audit():
     logger.info("Automaton Auditor (Streamlit) starting...")
 
     initial_state: AgentState = {
-        "repo_url": repo_url.strip(),
+        "repo_url": repo_url.strip() if has_repo else "",
         "pdf_path": pdf_path,
         "pdf_display": pdf_display,
         "rubric_path": rubric_path,
-        "rubric_dimensions": rubric["dimensions"],
+        "rubric_dimensions": rubric_dimensions,
         "synthesis_rules": rubric.get("synthesis_rules", {}),
         "evidences": {},
         "opinions": [],
