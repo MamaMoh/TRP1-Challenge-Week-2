@@ -63,3 +63,52 @@ flowchart TB
 
 - **Fan-out**: `start` → three Detectives in parallel; after Evidence Aggregator (and conditional routing), three Judges in parallel.
 - **Fan-in**: All Detectives → Evidence Aggregator; all Judges → Chief Justice.
+
+## Conditional and error-handling path (explicit)
+
+The following diagram highlights the **conditional edges** and the **error-handling path** so they are visually distinct from the normal flow. State types are shown on edges.
+
+```mermaid
+flowchart TB
+    EA[Evidence Aggregator]
+    ROUTE{"route_after_aggregator"}
+
+    subgraph normal_path["Normal path (no errors, evidence present)"]
+        TJ[to_judges]
+    end
+
+    subgraph error_path["Error-handling path"]
+        HF[handle_failure_or_missing]
+    end
+
+    subgraph judges_layer["Judges (both paths rejoin here)"]
+        P[Prosecutor]
+        D[Defense]
+        TL[Tech Lead]
+    end
+
+    EA -->|"state (full)"| ROUTE
+    ROUTE -->|"no errors, evidences present"| TJ
+    ROUTE -->|"errors ≠ ∅ OR evidences empty"| HF
+    TJ -->|"state"| P
+    TJ -->|"state"| D
+    TJ -->|"state"| TL
+    HF -->|"state + errors appended"| P
+    HF -->|"state + errors"| D
+    HF -->|"state + errors"| TL
+```
+
+- **Conditional node:** `route_after_aggregator(state)` branches on `state["errors"]` and `state["evidences"]`. One branch is the **error-handling path** (to `handle_failure_or_missing`), the other is the **normal path** (to `to_judges`). Both paths feed the same three judge nodes.
+
+## State types on edges (summary)
+
+| Segment | State keys / types on edge |
+|--------|----------------------------|
+| start → Detectives | `repo_url`, `pdf_path`, `pdf_display`, `rubric_path`, `rubric_dimensions`, `synthesis_rules` |
+| Detectives → Evidence Aggregator | `evidences: Dict[str, List[Evidence]]` (reducer: `operator.ior`), `errors: List[str]` (reducer: `operator.add`) |
+| Evidence Aggregator → conditional | Full merged state |
+| Conditional → to_judges | Full state (unchanged) |
+| Conditional → handle_failure_or_missing | Full state; node returns `{"errors": state.errors + [degradation_msg]}` |
+| to_judges / handle_failure_or_missing → Judges | Full state |
+| Judges → Chief Justice | `opinions: List[Dict]` (reducer: `operator.add`; each dict = JudicialOpinion) |
+| Chief Justice → END | `final_report: AuditReport` |
