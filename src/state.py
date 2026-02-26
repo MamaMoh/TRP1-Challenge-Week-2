@@ -57,8 +57,8 @@ class AgentState(TypedDict):
     Judges store opinions as dicts (model_dump) to avoid Pydantic serialization warnings
     when LangGraph merges state; chief_justice normalizes back to JudicialOpinion.
     """
-    repo_url: str
-    pdf_path: str
+    repo_url: str  # Empty string when auditing PDF only
+    pdf_path: Optional[str]  # None when auditing repo only
     pdf_display: Optional[str]  # Original PDF URL or path for report (user-facing)
     rubric_path: Optional[str]
     rubric_dimensions: List[Dict]

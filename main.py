@@ -115,8 +115,8 @@ def main():
             print(f"  rubric/{p.name}")
         sys.exit(0)
 
-    if not args.repo or not args.pdf:
-        parser.error("--repo and --pdf are required to run an audit (or use --list-rubrics)")
+    if not args.repo and not args.pdf:
+        parser.error("At least one of --repo or --pdf is required (or use --list-rubrics). Audit repo and pdf explicitly, not together.")
 
     logger = setup_logger(verbose=args.verbose)
     logger.info("Automaton Auditor starting...")
@@ -126,23 +126,30 @@ def main():
     print("  Deep LangGraph Swarms for Autonomous Governance")
     print()
 
-    if not validate_repo_url(args.repo):
+    repo_url = (args.repo or "").strip()
+    if repo_url and not validate_repo_url(repo_url):
         print(f"ERROR: Invalid GitHub URL: {args.repo}", file=sys.stderr)
         sys.exit(1)
 
-    _step("Resolving PDF input...")
-    try:
-        pdf_path = resolve_pdf_input(args.pdf)
-        if is_pdf_url(args.pdf):
-            _step("PDF downloaded from URL", "OK")
-        else:
-            _step("Using local PDF path", "OK")
-    except FileNotFoundError as e:
-        print(f"ERROR: PDF not found: {e}", file=sys.stderr)
-        sys.exit(1)
-    except RuntimeError as e:
-        print(f"ERROR: PDF download failed: {e}", file=sys.stderr)
-        sys.exit(1)
+    pdf_path = None
+    pdf_display = None
+    if args.pdf and args.pdf.strip():
+        _step("Resolving PDF input...")
+        try:
+            pdf_path = resolve_pdf_input(args.pdf.strip())
+            pdf_display = args.pdf.strip()
+            if is_pdf_url(args.pdf):
+                _step("PDF downloaded from URL", "OK")
+            else:
+                _step("Using local PDF path", "OK")
+        except FileNotFoundError as e:
+            print(f"ERROR: PDF not found: {e}", file=sys.stderr)
+            sys.exit(1)
+        except RuntimeError as e:
+            print(f"ERROR: PDF download failed: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        _step("No PDF provided — auditing repository only", "OK")
 
     rubric_path = args.rubric or str(DEFAULT_RUBRIC_PATH)
     output_dir = args.output or str(REPORT_ON_SELF)
@@ -151,12 +158,26 @@ def main():
     _step("Loading rubric...")
     try:
         rubric = load_rubric(rubric_path)
-        _step(f"Rubric loaded: {len(rubric['dimensions'])} dimensions", "OK")
+        all_dims = rubric["dimensions"]
+        # Audit repo and pdf explicitly: filter dimensions by provided artifact(s)
+        if repo_url and pdf_path:
+            rubric_dimensions = all_dims
+            _step(f"Rubric loaded: {len(rubric_dimensions)} dimensions (repo + PDF)", "OK")
+        elif repo_url:
+            rubric_dimensions = [d for d in all_dims if d.get("target_artifact") in ("github_repo", "pdf_images")]
+            _step(f"Rubric loaded: {len(rubric_dimensions)} dimensions (repository only)", "OK")
+        else:
+            rubric_dimensions = [d for d in all_dims if d.get("target_artifact") == "pdf_report"]
+            _step(f"Rubric loaded: {len(rubric_dimensions)} dimensions (PDF report only)", "OK")
     except FileNotFoundError as e:
         print(f"ERROR: Rubric file not found: {e}", file=sys.stderr)
         sys.exit(1)
     except (json.JSONDecodeError, ValueError) as e:
         print(f"ERROR: Invalid rubric: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not rubric_dimensions:
+        print("ERROR: No rubric dimensions match the provided artifact(s). Provide --repo and/or --pdf.", file=sys.stderr)
         sys.exit(1)
 
     _step("Loading environment configuration...")
@@ -174,13 +195,13 @@ def main():
         os.environ["LANGCHAIN_PROJECT"] = config.get("langchain_project", "automaton-auditor")
         _step("LangSmith tracing enabled", "OK")
     
-    # Initialize state (pdf_display = original URL/path for report; pdf_path = resolved path for processing)
+    # Initialize state: repo and PDF audited explicitly (one or both)
     initial_state: AgentState = {
-        "repo_url": args.repo,
+        "repo_url": repo_url,
         "pdf_path": pdf_path,
-        "pdf_display": args.pdf,
+        "pdf_display": pdf_display,
         "rubric_path": rubric_path,
-        "rubric_dimensions": rubric["dimensions"],
+        "rubric_dimensions": rubric_dimensions,
         "synthesis_rules": rubric.get("synthesis_rules", {}),
         "evidences": {},
         "opinions": [],

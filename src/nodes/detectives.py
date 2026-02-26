@@ -30,12 +30,19 @@ def repo_investigator_node(state: AgentState) -> AgentState:
     
     Collects evidence for all rubric dimensions targeting github_repo.
     Handles retries up to 3 times on failure.
+    Skips when repo_url is not provided (PDF-only audit).
     """
+    repo_url = state.get("repo_url") or ""
+    if not str(repo_url).strip():
+        return {"evidences": {}}
+
     repo_dimensions = [
         d for d in state["rubric_dimensions"]
         if d.get("target_artifact") == "github_repo"
     ]
-    
+    if not repo_dimensions:
+        return {"evidences": {}}
+
     evidences = {}
     max_retries = 3
     repo_path = None
@@ -43,7 +50,7 @@ def repo_investigator_node(state: AgentState) -> AgentState:
     # Retry logic for git clone
     for attempt in range(max_retries):
         try:
-            logger.info(f"RepoInvestigator: Attempt {attempt + 1}/{max_retries} - Cloning {state['repo_url']}")
+            logger.info(f"RepoInvestigator: Attempt {attempt + 1}/{max_retries} - Cloning {repo_url}")
             with tempfile.TemporaryDirectory() as tmpdir:
                 repo_path = clone_repo(state["repo_url"], tmpdir)
                 logger.info(f"RepoInvestigator: Successfully cloned repository to {repo_path}")
@@ -66,7 +73,7 @@ def repo_investigator_node(state: AgentState) -> AgentState:
                             goal="Git Forensic Analysis",
                             found=git_evidence_data["has_progression"],
                             content=f"Commits: {git_evidence_data['commit_count']}\n{git_evidence_data['commit_summary']}",
-                            location=state["repo_url"],
+                            location=repo_url,
                             rationale=git_evidence_data["rationale"],
                             confidence=git_evidence_data["confidence"]
                         ))
@@ -201,26 +208,34 @@ def doc_analyst_node(state: AgentState) -> AgentState:
     
     Collects evidence for all rubric dimensions targeting pdf_report.
     Handles retries up to 3 times on failure.
+    Skips when pdf_path is not provided (repo-only audit).
     """
+    pdf_path = state.get("pdf_path")
+    if not pdf_path or not str(pdf_path).strip():
+        return {"evidences": {}}
+
     pdf_dimensions = [
         d for d in state["rubric_dimensions"]
         if d.get("target_artifact") == "pdf_report"
     ]
-    
+    if not pdf_dimensions:
+        return {"evidences": {}}
+
     evidences = {}
     max_retries = 3
-    
+
     # Retry logic for PDF parsing
     for attempt in range(max_retries):
         try:
-            pdf_content = parse_pdf(state["pdf_path"])
+            pdf_content = parse_pdf(pdf_path)
             
             # Extract keywords mentioned in rubric
             keywords = ["Dialectical Synthesis", "Fan-In", "Fan-Out", "Metacognition", "State Synchronization"]
             keyword_results = extract_keywords(pdf_content, keywords)
             
-            # Get repo file list for cross-referencing (clone so we can verify paths mentioned in PDF)
-            repo_files = get_repo_file_list(state["repo_url"])
+            # Get repo file list for cross-referencing when repo is provided
+            repo_url = (state.get("repo_url") or "").strip()
+            repo_files = get_repo_file_list(repo_url) if repo_url else []
             
             # Create evidence for each dimension
             for dimension in pdf_dimensions:
@@ -253,7 +268,7 @@ def doc_analyst_node(state: AgentState) -> AgentState:
                             goal="Theoretical Depth Analysis",
                             found=True,
                             content="\n".join(content_parts),
-                            location=state["pdf_path"],
+                            location=pdf_path,
                             rationale=f"Found {len(found_keywords)} keyword matches; chunk query returned {len(chunk_context)} relevant sections",
                             confidence=0.85 if len(found_keywords) >= 2 or chunk_context else 0.5
                         ))
@@ -262,34 +277,44 @@ def doc_analyst_node(state: AgentState) -> AgentState:
                             goal="Theoretical Depth Analysis",
                             found=False,
                             content=None,
-                            location=state["pdf_path"],
+                            location=pdf_path,
                             rationale="No theoretical keywords found in PDF",
                             confidence=0.7
                         ))
                 
                 elif criterion_id == "report_accuracy":
-                    # Cross-reference file paths mentioned in PDF against actual repo files
-                    mentioned_files = verify_file_claims(pdf_content, repo_files)
-                    verified = [p for p, exists in mentioned_files.items() if exists]
-                    hallucinated = [p for p, exists in mentioned_files.items() if not exists]
-                    verified_count = len(verified)
-                    hallucinated_count = len(hallucinated)
-                    content_parts = [
-                        f"Verified paths: {verified_count}. Hallucinated paths: {hallucinated_count}.",
-                        f"Verified: {', '.join(verified[:15]) if verified else '(none)'}{' ...' if len(verified) > 15 else ''}.",
-                    ]
-                    if hallucinated_count <= 10 and hallucinated:
-                        content_parts.append(f"Hallucinated: {', '.join(hallucinated)}.")
-                    elif hallucinated:
-                        content_parts.append(f"Hallucinated (first 10): {', '.join(hallucinated[:10])} ...")
-                    evidence_list.append(Evidence(
-                        goal="Report Accuracy (Cross-Reference)",
-                        found=hallucinated_count == 0,
-                        content=" ".join(content_parts),
-                        location=state["pdf_path"],
-                        rationale=f"Cross-referenced {len(mentioned_files)} file paths (project paths only, case-insensitive).",
-                        confidence=0.9 if hallucinated_count == 0 else 0.5
-                    ))
+                    if not repo_url:
+                        evidence_list.append(Evidence(
+                            goal="Report Accuracy (Cross-Reference)",
+                            found=False,
+                            content="No repository provided for cross-reference.",
+                            location=pdf_path,
+                            rationale="PDF-only audit: repository not provided; cross-reference skipped.",
+                            confidence=0.0
+                        ))
+                    else:
+                        # Cross-reference file paths mentioned in PDF against actual repo files
+                        mentioned_files = verify_file_claims(pdf_content, repo_files)
+                        verified = [p for p, exists in mentioned_files.items() if exists]
+                        hallucinated = [p for p, exists in mentioned_files.items() if not exists]
+                        verified_count = len(verified)
+                        hallucinated_count = len(hallucinated)
+                        content_parts = [
+                            f"Verified paths: {verified_count}. Hallucinated paths: {hallucinated_count}.",
+                            f"Verified: {', '.join(verified[:15]) if verified else '(none)'}{' ...' if len(verified) > 15 else ''}.",
+                        ]
+                        if hallucinated_count <= 10 and hallucinated:
+                            content_parts.append(f"Hallucinated: {', '.join(hallucinated)}.")
+                        elif hallucinated:
+                            content_parts.append(f"Hallucinated (first 10): {', '.join(hallucinated[:10])} ...")
+                        evidence_list.append(Evidence(
+                            goal="Report Accuracy (Cross-Reference)",
+                            found=hallucinated_count == 0,
+                            content=" ".join(content_parts),
+                            location=pdf_path,
+                            rationale=f"Cross-referenced {len(mentioned_files)} file paths (project paths only, case-insensitive).",
+                            confidence=0.9 if hallucinated_count == 0 else 0.5
+                        ))
 
                 if evidence_list:
                     evidences[criterion_id] = evidence_list
@@ -329,13 +354,22 @@ def _repo_has_architecture_diagram(repo_url: str) -> tuple[bool, str]:
 
 
 def vision_inspector_node(state: AgentState) -> AgentState:
-    """Check repo for architectural diagram (e.g. Mermaid in docs/architecture.md or README)."""
+    """Check repo for architectural diagram (e.g. Mermaid in docs/architecture.md or README).
+    Skips when repo_url is not provided (PDF-only audit).
+    """
+    repo_url = (state.get("repo_url") or "").strip()
+    if not repo_url:
+        return {"evidences": {}}
+
     visual_dimensions = [
         d for d in state["rubric_dimensions"]
         if d.get("target_artifact") == "pdf_images" or d.get("id") == "swarm_visual"
     ]
+    if not visual_dimensions:
+        return {"evidences": {}}
+
     evidences = {}
-    found_diagram, diagram_content = _repo_has_architecture_diagram(state["repo_url"])
+    found_diagram, diagram_content = _repo_has_architecture_diagram(repo_url)
     for dimension in visual_dimensions:
         criterion_id = dimension["id"]
         evidences[criterion_id] = [Evidence(
