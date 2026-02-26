@@ -1,5 +1,12 @@
-"""Chief Justice node for deterministic conflict resolution and report synthesis."""
-from typing import Dict, Any, List, Optional
+"""Chief Justice node for deterministic conflict resolution and report synthesis.
+
+Conflict resolution is implemented as a declarative rule engine: named rules
+are applied in order; the first matching rule determines the final score.
+Security override triggers only on explicit, confirmed security language
+(not generic "security" wording). High-variance tie-breaking uses Tech Lead
+as primary; evidence count is a secondary signal (fact supremacy).
+"""
+from typing import Dict, Any, List, Optional, Tuple, Callable
 
 from src.config import load_rubric
 from src.state import AgentState, JudicialOpinion, CriterionResult, AuditReport
@@ -11,11 +18,120 @@ logger = get_logger("justice")
 NUM_JUDGES = 3
 
 
-def chief_justice_node(state: AgentState) -> AgentState:
-    """Synthesize dialectical conflict into final verdict using hardcoded deterministic rules.
+def _security_override_condition(
+    prosecutor: JudicialOpinion,
+    _defense: JudicialOpinion,
+    _tech_lead: JudicialOpinion,
+    _criterion_id: str,
+) -> bool:
+    """True only when Prosecutor explicitly identifies a confirmed security flaw.
+    Requires concrete language (os.system detected, shell injection, or confirmed
+    security vulnerability) to avoid capping on vague 'security' wording.
+    """
+    if not prosecutor or not prosecutor.argument:
+        return False
+    arg = prosecutor.argument.lower()
+    # Explicit security findings only
+    if "shell injection" in arg or "command injection" in arg:
+        return True
+    if "security vulnerability" in arg or "security flaw" in arg:
+        return True
+    if "os.system" in arg and any(
+        w in arg for w in ("detected", "found", "used", "present", "violation", "call")
+    ):
+        return True
+    return False
 
-    Runs only when all three judges have submitted opinions (one per dimension each).
-    Otherwise returns no state update so the last invocation (with full state) produces the report.
+
+def _apply_security_override(
+    prosecutor: JudicialOpinion,
+    defense: JudicialOpinion,
+    tech_lead: JudicialOpinion,
+    _criterion_id: str,
+) -> Tuple[int, str]:
+    """Rule 1: Confirmed security flaw caps score at 3."""
+    score = min(3, tech_lead.score if tech_lead else 3)
+    return score, "Security flaw detected - score capped at 3 per security_override rule."
+
+
+def _apply_variance_re_evaluation(
+    prosecutor: JudicialOpinion,
+    defense: JudicialOpinion,
+    tech_lead: JudicialOpinion,
+    _criterion_id: str,
+) -> Tuple[int, str]:
+    """Rule 2: Variance > 2 — Tech Lead tie-breaker; evidence count is secondary."""
+    scores = [p.score for p in (prosecutor, defense, tech_lead) if p]
+    score_variance = max(scores) - min(scores) if scores else 0
+    # Prefer Tech Lead as tie-breaker (functionality weight); evidence count only if TL tied
+    tl_score = tech_lead.score if tech_lead else (sum(scores) // len(scores) if scores else 1)
+    p_ev = len(prosecutor.cited_evidence) if prosecutor else 0
+    d_ev = len(defense.cited_evidence) if defense else 0
+    tl_ev = len(tech_lead.cited_evidence) if tech_lead else 0
+    if p_ev > d_ev and p_ev > tl_ev:
+        return prosecutor.score, (
+            f"High variance ({score_variance} points) - Prosecutor cited more evidence, fact supremacy applied."
+        )
+    return tl_score, (
+        f"High variance ({score_variance} points) - Tech Lead assessment used as tie-breaker."
+    )
+
+
+def _apply_functionality_weight(
+    _p: JudicialOpinion,
+    _d: JudicialOpinion,
+    tech_lead: JudicialOpinion,
+    criterion_id: str,
+) -> Tuple[int, str]:
+    """Rule 3: Architecture/orchestration criteria — Tech Lead carries highest weight."""
+    s = tech_lead.score if tech_lead else 3
+    return s, "Architecture criterion - Tech Lead assessment carries highest weight per functionality_weight rule."
+
+
+def _apply_default(
+    _p: JudicialOpinion,
+    _d: JudicialOpinion,
+    tech_lead: JudicialOpinion,
+    _criterion_id: str,
+) -> Tuple[int, str]:
+    """Rule 4: Default — Tech Lead breaks ties."""
+    scores = [p.score for p in (_p, _d, tech_lead) if p]
+    s = tech_lead.score if tech_lead else (sum(scores) // len(scores) if scores else 3)
+    return s, "Scores consistent - Tech Lead assessment confirmed."
+
+
+def _resolve_final_score(
+    prosecutor: JudicialOpinion,
+    defense: JudicialOpinion,
+    tech_lead: JudicialOpinion,
+    criterion_id: str,
+) -> Tuple[int, str]:
+    """Apply declarative rules in order; first match wins."""
+    rules: List[Tuple[Callable[..., bool], Callable[..., Tuple[int, str]]]] = [
+        (_security_override_condition, lambda p, d, t, c: _apply_security_override(p, d, t, c)),
+        (
+            lambda p, d, t, c: (max([p.score, d.score, t.score]) - min([p.score, d.score, t.score]) > 2)
+            if all([p, d, t]) else False,
+            _apply_variance_re_evaluation,
+        ),
+        (
+            lambda p, d, t, c: "architecture" in c.lower() or "orchestration" in c.lower(),
+            lambda p, d, t, c: _apply_functionality_weight(p, d, t, c),
+        ),
+    ]
+    for condition, apply_fn in rules:
+        if condition(prosecutor, defense, tech_lead, criterion_id):
+            return apply_fn(prosecutor, defense, tech_lead, criterion_id)
+    # Rule 4: Default — Tech Lead breaks ties
+    return _apply_default(prosecutor, defense, tech_lead, criterion_id)
+
+
+def chief_justice_node(state: AgentState) -> AgentState:
+    """Synthesize dialectical conflict into final verdict using a declarative rule engine.
+
+    Rules (security override, variance re-evaluation, functionality weight, default) are
+    applied in order; first match wins. Runs only when all three judges have submitted
+    opinions (one per dimension each).
     """
     opinions_raw = state.get("opinions") or []
     # Normalize: state stores dicts (from model_dump) to avoid Pydantic serialization warnings
@@ -86,52 +202,10 @@ def chief_justice_node(state: AgentState) -> AgentState:
             criterion_count += 1
             continue
         
-        # Conflict resolution logic (hardcoded deterministic rules)
+        # Conflict resolution via declarative rule engine
+        final_score, rationale = _resolve_final_score(prosecutor, defense, tech_lead, criterion_id)
         scores = [prosecutor.score, defense.score, tech_lead.score]
         score_variance = max(scores) - min(scores)
-        
-        # Rule 1: Security Override — only when Prosecutor explicitly identifies a confirmed flaw
-        arg_lower = (prosecutor.argument or "").lower() if prosecutor else ""
-        has_security_issue = (
-            prosecutor and (
-                "shell injection" in arg_lower or
-                "security vulnerability" in arg_lower or
-                "security flaw" in arg_lower or
-                ("os.system" in arg_lower and any(
-                    w in arg_lower for w in ("found", "detected", "used", "present", "violation")
-                ))
-            )
-        )
-        
-        if has_security_issue:
-            final_score = min(3, tech_lead.score if tech_lead else 3)
-            rationale = "Security flaw detected - score capped at 3 per security_override rule."
-        # Rule 2: Variance Re-Evaluation (when variance > 2)
-        elif score_variance > 2:
-            # High variance - re-evaluate based on evidence
-            # Tech Lead breaks tie, but consider evidence quality
-            prosecutor_evidence_count = len(prosecutor.cited_evidence) if prosecutor else 0
-            defense_evidence_count = len(defense.cited_evidence) if defense else 0
-            tech_lead_evidence_count = len(tech_lead.cited_evidence) if tech_lead else 0
-            
-            # Fact Supremacy: More evidence citations = more weight
-            if prosecutor_evidence_count > defense_evidence_count and prosecutor_evidence_count > tech_lead_evidence_count:
-                final_score = prosecutor.score
-                rationale = f"High variance ({score_variance} points) - Prosecutor cited more evidence, fact supremacy applied."
-            elif tech_lead_evidence_count >= prosecutor_evidence_count and tech_lead_evidence_count >= defense_evidence_count:
-                final_score = tech_lead.score
-                rationale = f"High variance ({score_variance} points) - Tech Lead assessment used as tie-breaker based on evidence quality."
-            else:
-                final_score = tech_lead.score if tech_lead else (sum(scores) // len(scores))
-                rationale = f"High variance ({score_variance} points) - Tech Lead assessment used as tie-breaker."
-        # Rule 3: Functionality Weight (for architecture criteria)
-        elif "architecture" in criterion_id.lower() or "orchestration" in criterion_id.lower():
-            final_score = tech_lead.score if tech_lead else (sum(scores) // len(scores))
-            rationale = "Architecture criterion - Tech Lead assessment carries highest weight per functionality_weight rule."
-        # Rule 4: Default - Tech Lead breaks ties
-        else:
-            final_score = tech_lead.score if tech_lead else (sum(scores) // len(scores))
-            rationale = "Scores are consistent - Tech Lead assessment confirmed."
         
         # Generate dissent summary if variance > 2 (concatenation avoids brace-format errors)
         dissent_summary: Optional[str] = None
