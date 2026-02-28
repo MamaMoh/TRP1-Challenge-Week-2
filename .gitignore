@@ -40,16 +40,6 @@ ENV/
 # LangSmith
 .langsmith/
 
-# Audit reports (keep structure, ignore content)
-audit/report_bypeer_received/*
-audit/report_onpeer_generated/*
-audit/report_onself_generated/*
-audit/langsmith_logs/*
-!audit/report_bypeer_received/.gitkeep
-!audit/report_onpeer_generated/.gitkeep
-!audit/report_onself_generated/.gitkeep
-!audit/langsmith_logs/.gitkeep
-
 # Temporary files
 *.tmp
 *.log
