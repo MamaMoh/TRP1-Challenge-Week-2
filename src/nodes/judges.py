@@ -1,4 +1,18 @@
-"""Judicial layer nodes for dialectical evaluation."""
+"""Judicial layer nodes for dialectical evaluation.
+
+STRUCTURED OUTPUT ENFORCEMENT (rubric: structured_output_enforcement):
+- All Judge LLM calls use .with_structured_output(JudicialOpinion) bound to the Pydantic schema.
+- Output includes score (int 1-5), argument (str), cited_evidence (list of evidence UUIDs).
+- Retry logic (JUDICIAL_OPINION_RETRIES) on Pydantic ValidationError and parse failures.
+- Output is validated against JudicialOpinion before being added to state.
+
+JUDICIAL NUANCE AND DIALECTICS (rubric: judicial_nuance):
+- Three distinct, conflicting personas run in parallel on the same evidence:
+  1. Prosecutor: adversarial lens; looks for gaps, security flaws, structural violations, laziness.
+  2. Defense: charitable lens; rewards effort, intent, creative workarounds, Spirit of the Law.
+  3. Tech Lead: pragmatic lens; focuses on architectural soundness, maintainability, practical viability.
+- Each persona has a separate system prompt; prompts are intentionally distinct to produce genuine score variance.
+"""
 from typing import Dict, Any, Optional
 
 from langchain_openai import ChatOpenAI
@@ -119,11 +133,11 @@ def prosecutor_node(state: AgentState) -> AgentState:
         evidence_text_safe = _escape_braces_for_prompt(evidence_text)
         judicial_logic_safe = _escape_braces_for_prompt(judicial_logic)
 
-        # Prosecutor system prompt - critical and harsh
+        # Prosecutor system prompt - adversarial, critical, harsh (distinct from Defense/Tech Lead)
         system_prompt = f"""You are The Prosecutor - The Critical Lens.
 
 Core Philosophy: "Trust No One. Assume Vibe Coding."
-Objective: Scrutinize the evidence for gaps, security flaws, structural violations, and laziness.
+Objective: Adversarial scrutiny. Scrutinize the evidence for gaps, security flaws, structural violations, and laziness.
 
 Judicial Logic for this criterion:
 {judicial_logic_safe}
@@ -197,11 +211,11 @@ def defense_node(state: AgentState) -> AgentState:
         evidence_text_safe = _escape_braces_for_prompt(evidence_text)
         judicial_logic_safe = _escape_braces_for_prompt(judicial_logic)
 
-        # Defense system prompt - charitable and forgiving
+        # Defense system prompt - charitable, forgiving (distinct from Prosecutor/Tech Lead)
         system_prompt = f"""You are The Defense Attorney - The Optimistic Lens.
 
 Core Philosophy: "Reward Effort and Intent. Look for the 'Spirit of the Law'."
-Objective: Highlight creative workarounds, deep thinking, effort, and iteration history.
+Objective: Charitable interpretation. Highlight creative workarounds, deep thinking, effort, and iteration history.
 
 Judicial Logic for this criterion:
 {judicial_logic_safe}
@@ -273,11 +287,11 @@ def tech_lead_node(state: AgentState) -> AgentState:
         evidence_text_safe = _escape_braces_for_prompt(evidence_text)
         judicial_logic_safe = _escape_braces_for_prompt(judicial_logic)
 
-        # Tech Lead system prompt - pragmatic and balanced
+        # Tech Lead system prompt - pragmatic, balanced (distinct from Prosecutor/Defense)
         system_prompt = f"""You are The Tech Lead - The Pragmatic Lens.
 
 Core Philosophy: "Does it actually work? Is it maintainable?"
-Objective: Evaluate architectural soundness, code cleanliness, technical debt, and practical viability.
+Objective: Pragmatic assessment. Evaluate architectural soundness, code cleanliness, technical debt, and practical viability.
 
 Judicial Logic for this criterion:
 {judicial_logic_safe}

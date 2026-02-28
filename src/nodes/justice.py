@@ -1,10 +1,18 @@
-"""Chief Justice node for deterministic conflict resolution and report synthesis.
+"""Chief Justice Synthesis Engine — deterministic conflict resolution and report synthesis.
 
-Conflict resolution is implemented as a declarative rule engine: named rules
-are applied in order; the first matching rule determines the final score.
-Security override triggers only on explicit, confirmed security language
-(not generic "security" wording). High-variance tie-breaking uses Tech Lead
-as primary; evidence count is a secondary signal (fact supremacy).
+CHIEF JUSTICE SYNTHESIS (rubric: chief_justice_synthesis):
+Conflict resolution uses hardcoded deterministic Python logic (no LLM). Rules applied in order:
+
+1. Rule of Security (security_override): If Prosecutor identifies a confirmed security vulnerability
+   (e.g. os.system detected, shell injection), score is capped at 3 regardless of Defense/Tech Lead.
+2. Rule of Evidence (fact_supremacy): Forensic evidence overrules judicial opinion; when variance > 2,
+   Tech Lead and evidence count (cited_evidence) determine the final score.
+3. Rule of Functionality (functionality_weight): For architecture/orchestration criteria,
+   Tech Lead assessment carries highest weight.
+4. Variance re-evaluation: When score variance > 2 between judges, re-evaluate using Tech Lead
+   as tie-breaker; dissent summary is required in the report.
+
+Output is a structured AuditReport (Pydantic), not console print.
 """
 from typing import Dict, Any, List, Optional, Tuple, Callable
 
@@ -188,7 +196,7 @@ def chief_justice_node(state: AgentState) -> AgentState:
         tech_lead = next((o for o in opinions if o.judge == "TechLead"), None)
         
         if not all([prosecutor, defense, tech_lead]):
-            # Missing opinions - use lowest score
+            # Missing opinions - use lowest score (deterministic, no LLM)
             final_score = 1
             criteria_results.append(CriterionResult(
                 dimension_id=criterion_id,
@@ -201,8 +209,9 @@ def chief_justice_node(state: AgentState) -> AgentState:
             total_score += final_score
             criterion_count += 1
             continue
-        
-        # Conflict resolution via declarative rule engine
+
+        # Conflict resolution logic
+        # Rule of Security, Rule of Evidence (fact supremacy), Rule of Functionality, variance re-evaluation (deterministic, no LLM)
         final_score, rationale = _resolve_final_score(prosecutor, defense, tech_lead, criterion_id)
         scores = [prosecutor.score, defense.score, tech_lead.score]
         score_variance = max(scores) - min(scores)
